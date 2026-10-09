@@ -574,7 +574,8 @@ int
 scp_send_connect_session_response(struct trans *trans,
                                   enum scp_sconnect_status status,
                                   int display_fd,
-                                  int chan_fd)
+                                  int chan_fd,
+                                  int aux_fd)
 {
     int rv = libipm_msg_out_init(
                  trans, (int)E_SCP_CONNECT_SESSION_RESPONSE,
@@ -607,6 +608,20 @@ scp_send_connect_session_response(struct trans *trans,
         }
     }
 
+    // Send the auxiliary display file descriptor, guarded by a boolean
+    if (rv == 0)
+    {
+        if (aux_fd >= 0)
+        {
+            rv = libipm_msg_out_append(
+                     trans, "bh", 1, aux_fd);
+        }
+        else
+        {
+            rv = libipm_msg_out_append(trans, "b", 0);
+        }
+    }
+
     if (rv == 0)
     {
         libipm_msg_out_mark_end(trans);
@@ -626,6 +641,7 @@ scp_send_connect_session_response(struct trans *trans,
  * @param trans SCP trans
  * @param[out] display_fd Display server file descriptor
  * @param[out] chan_fd Chansrv file descriptor
+ * @param[out] aux_fd Auxiliary display server file descriptor
  * @return != 0 for error
  *
  * This wrapper is nneded as libipm doesn't currently guarantee to
@@ -637,7 +653,8 @@ scp_send_connect_session_response(struct trans *trans,
 static int
 get_connect_session_response_fds(struct trans *trans,
                                  int *display_fd,
-                                 int *chan_fd)
+                                 int *chan_fd,
+                                 int *aux_fd)
 {
     int rv;
     int fd_present;
@@ -668,6 +685,19 @@ get_connect_session_response_fds(struct trans *trans,
         }
     }
 
+    // Read the auxiliary display server file descriptor and guard
+    if ((rv = libipm_msg_in_parse(trans, "b", &fd_present)) != 0)
+    {
+        return rv;
+    }
+    if (fd_present)
+    {
+        if ((rv = libipm_msg_in_parse(trans, "h", aux_fd)) != 0)
+        {
+            return rv;
+        }
+    }
+
     return 0;
 }
 
@@ -677,7 +707,8 @@ int
 scp_get_connect_session_response(struct trans *trans,
                                  enum scp_sconnect_status *status,
                                  int *display_fd,
-                                 int *chan_fd)
+                                 int *chan_fd,
+                                 int *aux_fd)
 {
     int rv;
     /* Intermediate values */
@@ -687,12 +718,14 @@ scp_get_connect_session_response(struct trans *trans,
      * FDs getting clobbered */
     *display_fd = -1;
     *chan_fd = -1;
+    *aux_fd = -1;
 
     if ((rv = libipm_msg_in_parse( trans, "i", &i_status)) == 0)
     {
         // Us a helper function to get the file descriptors as this
         // makes flow control easier.
-        rv = get_connect_session_response_fds(trans, display_fd, chan_fd);
+        rv = get_connect_session_response_fds(trans, display_fd, chan_fd,
+                                              aux_fd);
         if (rv == 0)
         {
             *status = (enum scp_sconnect_status)i_status;
@@ -709,6 +742,11 @@ scp_get_connect_session_response(struct trans *trans,
             {
                 g_file_close(*chan_fd);
                 *chan_fd = -1;
+            }
+            if (*aux_fd >= 0)
+            {
+                g_file_close(*aux_fd);
+                *aux_fd = -1;
             }
         }
     }
