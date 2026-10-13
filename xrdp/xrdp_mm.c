@@ -864,16 +864,16 @@ xrdp_mm_process_rail_drawing_orders(struct xrdp_mm *self, struct stream *s)
 #define WM_GFX_FRAME_ID_BASE 0x40000000
 
 /******************************************************************************/
-int
-xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
-                                struct xrdp_bitmap *bitmap,
-                                struct xrdp_rect *rect, int surface_id,
-                                int x, int y)
+/* Sends one rectangle of bitmap as planar tiles, inside a frame. pixels,
+ * comp_s and temp_s are GFX_PLANAR_BYTES of scratch space. return error */
+static int
+xrdp_mm_egfx_send_planar_rect(struct xrdp_mm *self,
+                              struct xrdp_bitmap *bitmap,
+                              const struct xrdp_rect *rect, int surface_id,
+                              int x, int y, char *pixels,
+                              struct stream *comp_s, struct stream *temp_s)
 {
     struct xrdp_egfx_rect gfx_rect;
-    struct stream *comp_s;
-    struct stream *temp_s;
-    char *pixels;
     char *src8;
     char *dst8;
     int index;
@@ -885,11 +885,8 @@ xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
     int bheight;
     int cx;
     int cy;
-    int frame_id;
-    int rv = 0;
 
-    LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_bitmap:");
-    LOG_DEVEL(LOG_LEVEL_DEBUG, "xrdp_mm_egfx_send_planar_bitmap: "
+    LOG_DEVEL(LOG_LEVEL_DEBUG, "xrdp_mm_egfx_send_planar_rect: "
               "surface_id %d rect %d %d %d %d x %d y %d",
               surface_id, rect->left, rect->top, rect->right, rect->bottom,
               x, y);
@@ -927,23 +924,7 @@ xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
             cx = 4096 / cy;
         }
     }
-    LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_bitmap: cx %d cy %d", cx, cy);
-    pixels = g_new(char, GFX_PLANAR_BYTES);
-    make_stream(comp_s);
-    init_stream(comp_s, GFX_PLANAR_BYTES);
-    make_stream(temp_s);
-    init_stream(temp_s, GFX_PLANAR_BYTES);
-    frame_id = WM_GFX_FRAME_ID_BASE + self->wm_gfx_frames_sent + 1;
-    if (xrdp_egfx_send_frame_start(self->egfx, frame_id, 0) != 0)
-    {
-        LOG(LOG_LEVEL_INFO, "xrdp_mm_egfx_send_planar_bitmap: "
-            "xrdp_egfx_send_frame_start error");
-        rv = 1;
-        goto cleanup;
-    }
-
-    LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_bitmap: left %d top %d right %d "
-              "bottom %d", rect->left, rect->top, rect->right, rect->bottom);
+    LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_rect: cx %d cy %d", cx, cy);
     for (yindex = rect->top; yindex < rect->bottom; yindex += cy)
     {
         bheight = rect->bottom - yindex;
@@ -952,7 +933,7 @@ xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
         {
             bwidth = rect->right - xindex;
             bwidth = MIN(bwidth, cx);
-            LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_bitmap: xindex %d "
+            LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_rect: xindex %d "
                       "yindex %d, bwidth %d bheight %d",
                       xindex, yindex, bwidth, bheight);
             src8 = bitmap->data + bitmap->line_size * yindex + xindex * 4;
@@ -970,13 +951,13 @@ xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
             comp_s->p = comp_s->data;
             if (lines != bheight)
             {
-                LOG(LOG_LEVEL_INFO, "xrdp_mm_egfx_send_planar_bitmap: "
+                LOG(LOG_LEVEL_INFO, "xrdp_mm_egfx_send_planar_rect: "
                     "lines(%d) != bheight(%d) error", lines, bheight);
             }
             else
             {
                 comp_bytes = (int)(comp_s->end - comp_s->data);
-                LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_bitmap: lines %d "
+                LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_rect: lines %d "
                           "comp_bytes %d", lines, comp_bytes);
                 gfx_rect.x1 = xindex - x;
                 gfx_rect.y1 = yindex - y;
@@ -988,12 +969,59 @@ xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
                                                     &gfx_rect, comp_s->data,
                                                     comp_bytes) != 0)
                 {
-                    LOG(LOG_LEVEL_INFO, "xrdp_mm_egfx_send_planar_bitmap: "
+                    LOG(LOG_LEVEL_INFO, "xrdp_mm_egfx_send_planar_rect: "
                         "xrdp_egfx_send_wire_to_surface1 error");
-                    rv = 1;
-                    goto cleanup;
+                    return 1;
                 }
             }
+        }
+    }
+    return 0;
+}
+
+/******************************************************************************/
+/* Sends rectangles of bitmap to the client as one frame of planar tiles.
+ * return error */
+int
+xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
+                                struct xrdp_bitmap *bitmap,
+                                const struct xrdp_rect *rects, int num_rects,
+                                int surface_id, int x, int y)
+{
+    struct stream *comp_s;
+    struct stream *temp_s;
+    char *pixels;
+    int index;
+    int frame_id;
+    int rv = 0;
+
+    LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_send_planar_bitmap: %d rects",
+              num_rects);
+    if (num_rects < 1)
+    {
+        return 0;
+    }
+    pixels = g_new(char, GFX_PLANAR_BYTES);
+    make_stream(comp_s);
+    init_stream(comp_s, GFX_PLANAR_BYTES);
+    make_stream(temp_s);
+    init_stream(temp_s, GFX_PLANAR_BYTES);
+    frame_id = WM_GFX_FRAME_ID_BASE + self->wm_gfx_frames_sent + 1;
+    if (xrdp_egfx_send_frame_start(self->egfx, frame_id, 0) != 0)
+    {
+        LOG(LOG_LEVEL_INFO, "xrdp_mm_egfx_send_planar_bitmap: "
+            "xrdp_egfx_send_frame_start error");
+        rv = 1;
+        goto cleanup;
+    }
+    for (index = 0; index < num_rects; index++)
+    {
+        if (xrdp_mm_egfx_send_planar_rect(self, bitmap, rects + index,
+                                          surface_id, x, y, pixels,
+                                          comp_s, temp_s) != 0)
+        {
+            rv = 1;
+            goto cleanup;
         }
     }
     if (xrdp_egfx_send_frame_end(self->egfx, frame_id) != 0)
@@ -3960,14 +3988,47 @@ xrdp_mm_efgx_add_dirty_region_to_planar_list(struct xrdp_mm *self,
 
 }
 
+/* A dirty region of more rectangles than this goes out as its bounding
+ * box: every tile is a PDU of its own */
+#define MAX_PLANAR_RECTS 64
+
+/*****************************************************************************/
+/* Sends the rectangles of a dirty region, not their bounding box, which
+ * can be much larger: two small changes in opposite corners would send
+ * the whole screen. return error */
+static int
+xrdp_mm_draw_region(struct xrdp_mm *self, struct xrdp_region *region,
+                    int surface_id, int x, int y)
+{
+    struct xrdp_rect rects[MAX_PLANAR_RECTS];
+    struct xrdp_rect extra;
+    int num_rects = 0;
+
+    while (num_rects < MAX_PLANAR_RECTS &&
+            xrdp_region_get_rect(region, num_rects, rects + num_rects) == 0)
+    {
+        num_rects++;
+    }
+    if (num_rects == MAX_PLANAR_RECTS &&
+            xrdp_region_get_rect(region, num_rects, &extra) == 0)
+    {
+        if (xrdp_region_get_bounds(region, rects) != 0)
+        {
+            return 0;
+        }
+        num_rects = 1;
+    }
+    return xrdp_mm_egfx_send_planar_bitmap(self, self->wm->screen,
+                                           rects, num_rects,
+                                           surface_id, x, y);
+}
+
 /*****************************************************************************/
 static int
 xrdp_mm_draw_dirty(struct xrdp_mm *self)
 {
-    struct xrdp_rect rect;
     struct xrdp_rect mon_rect;
     struct xrdp_region *mon_reg;
-    int error;
     int index;
     int jndex;
     int count;
@@ -3979,13 +4040,8 @@ xrdp_mm_draw_dirty(struct xrdp_mm *self)
     count = self->wm->client_info->display_sizes.monitorCount;
     if (count < 1)
     {
-        error = xrdp_region_get_bounds(self->wm->screen_dirty_region, &rect);
-        if (error == 0)
-        {
-            rv = xrdp_mm_egfx_send_planar_bitmap(self,
-                                                 self->wm->screen, &rect,
-                                                 self->egfx->surface_id, 0, 0);
-        }
+        rv = xrdp_mm_draw_region(self, self->wm->screen_dirty_region,
+                                 self->egfx->surface_id, 0, 0);
     }
     else
     {
@@ -4017,16 +4073,9 @@ xrdp_mm_draw_dirty(struct xrdp_mm *self)
             xrdp_region_intersect_rect(mon_reg, &mon_rect);
             if (xrdp_region_not_empty(mon_reg))
             {
-                error = xrdp_region_get_bounds(mon_reg, &rect);
-                if (error == 0)
-                {
-                    surface_id = index;
-                    rv = xrdp_mm_egfx_send_planar_bitmap(self,
-                                                         self->wm->screen,
-                                                         &rect,
-                                                         surface_id,
-                                                         mi->left, mi->top);
-                }
+                surface_id = index;
+                rv = xrdp_mm_draw_region(self, mon_reg, surface_id,
+                                         mi->left, mi->top);
             }
             xrdp_region_delete(mon_reg);
         }

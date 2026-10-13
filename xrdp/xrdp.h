@@ -574,7 +574,7 @@ xrdp_mm_efgx_add_dirty_region_to_planar_list(struct xrdp_mm *self,
 int
 xrdp_mm_egfx_send_planar_bitmap(struct xrdp_mm *self,
                                 struct xrdp_bitmap *bitmap,
-                                struct xrdp_rect *rect,
+                                const struct xrdp_rect *rects, int num_rects,
                                 int surface_id, int x, int y);
 
 /* xrdp_mm_cpp.c */
