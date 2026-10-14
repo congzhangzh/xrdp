@@ -146,6 +146,13 @@ struct wlup_mutter
     int num_transfers;
     char *client_text;      /* the RDP client's clipboard text */
     int client_text_len;
+    /* Damage copied while the core wanted no frames (wlup_wants_frames()),
+     * as a bounding box, painted once it does again */
+    int held;
+    int held_x1;
+    int held_y1;
+    int held_x2;
+    int held_y2;
 };
 
 /* MIME types accepted and offered for text, best first */
@@ -299,6 +306,25 @@ update_pointer(struct wlup *v, struct spa_buffer *buf)
 
 /******************************************************************************/
 static void
+hold_damage(struct wlup_mutter *m, int x, int y, int cx, int cy)
+{
+    if (!m->held)
+    {
+        m->held = 1;
+        m->held_x1 = x;
+        m->held_y1 = y;
+        m->held_x2 = x + cx;
+        m->held_y2 = y + cy;
+        return;
+    }
+    m->held_x1 = MIN(m->held_x1, x);
+    m->held_y1 = MIN(m->held_y1, y);
+    m->held_x2 = MAX(m->held_x2, x + cx);
+    m->held_y2 = MAX(m->held_y2, y + cy);
+}
+
+/******************************************************************************/
+static void
 on_process(void *data)
 {
     struct wlup *v = (struct wlup *)data;
@@ -390,6 +416,24 @@ on_process(void *data)
     }
     if (v->suppress_output || (!full && num_rects == 0))
     {
+        return;
+    }
+    if (!wlup_wants_frames(v))
+    {
+        /* Much of what was painted still waits for the client. Frames
+         * keep coming, as PipeWire's damage is relative to the last
+         * buffer, but they are only copied; mutter_frames_wanted()
+         * paints what changed once xrdp has sent most of it */
+        if (full)
+        {
+            hold_damage(m, 0, 0, m->width, m->height);
+            v->need_full_paint = 0;
+        }
+        for (i = 0; i < num_rects && !full; ++i)
+        {
+            hold_damage(m, rects[i * 4], rects[i * 4 + 1],
+                        rects[i * 4 + 2], rects[i * 4 + 3]);
+        }
         return;
     }
     v->server_begin_update(v);
@@ -1518,8 +1562,26 @@ wlup_mutter_check_wait_objs(struct wlup *v)
 }
 
 /******************************************************************************/
-/* Frames arrive from PipeWire unasked: no frames_wanted() yet. The desktop
- * image is wlup's own: no pixels_busy() */
+/* Paints the damage held back while frames were not wanted */
+static void
+mutter_frames_wanted(struct wlup *v)
+{
+    struct wlup_mutter *m = (struct wlup_mutter *)v->backend_data;
+
+    if (m == NULL || !m->held || !wlup_wants_frames(v))
+    {
+        return;
+    }
+    m->held = 0;
+    v->server_begin_update(v);
+    wlup_paint_region(v, m->held_x1, m->held_y1,
+                      m->held_x2 - m->held_x1, m->held_y2 - m->held_y1);
+    v->server_end_update(v);
+}
+
+/******************************************************************************/
+/* Frames arrive from PipeWire unasked: frames_wanted() paints what was
+ * held back meanwhile. The desktop image is wlup's own: no pixels_busy() */
 static const struct wlup_backend_ops mutter_ops =
 {
     .name = "mutter",
@@ -1530,6 +1592,7 @@ static const struct wlup_backend_ops mutter_ops =
     .key = wlup_mutter_key,
     .mouse = wlup_mutter_mouse,
     .resize = wlup_mutter_resize,
+    .frames_wanted = mutter_frames_wanted,
     .set_clipboard_text = wlup_mutter_set_clipboard_text
 };
 
