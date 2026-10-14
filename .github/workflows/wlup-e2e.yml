@@ -78,11 +78,6 @@ jobs:
   backpressure:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # Known intermittent issue on GNOME with H.264 over the slow link: a
-    # change can take 20 s to show, while frames keep flowing and wlup has
-    # sent the damage (see the wlup/H.264 debug logs in the artifacts).
-    # Shown, but does not fail the workflow until it is understood
-    continue-on-error: ${{ matrix.session == 'gnome' }}
     strategy:
       fail-fast: false
       matrix:
