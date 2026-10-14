@@ -1571,7 +1571,8 @@ static const struct wlup_backend_ops mutter_ops =
     .key = wlup_mutter_key,
     .mouse = wlup_mutter_mouse,
     .resize = wlup_mutter_resize,
-    .frames_wanted = mutter_frames_wanted
+    .frames_wanted = mutter_frames_wanted,
+    .set_clipboard_text = wlup_mutter_set_clipboard_text
 };
 
 /******************************************************************************/
