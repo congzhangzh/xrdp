@@ -10,6 +10,10 @@
 #   xfreerdp3 --RDP--> xrdp + libxup --> Xorg + xorgxrdp (built here
 #       against the xrdp under test), with xterms instead of foot
 #
+# or, with BP_SESSION=gnome in the xrdp-wlup-mutter image with systemd as
+# PID 1 (as for run-e2e-mutter.sh), of GNOME through wlup's Mutter backend:
+# foot terminals tiled left (probe) and right (busy) with Super+Left/Right
+#
 # Does wlup send data nobody needs, and does a busy screen on a slow link
 # pile up frames that delay everything after them? xrdp queues whatever
 # the socket does not take in user space (trans_write_copy_s(), no size
@@ -57,6 +61,9 @@
 #       xrdp-wlup-dev bash /src/wlup/test/run-backpressure.sh /src /out
 #   docker run --rm --cap-add NET_ADMIN -e BP_SESSION=xorg ... \
 #       xrdp-wlup-xorgxrdp bash /src/wlup/test/run-backpressure.sh /src /out
+#   docker run -d --name bp --privileged --cgroupns=private --tmpfs /run \
+#       --tmpfs /run/lock -v ... xrdp-wlup-mutter /usr/lib/systemd/systemd
+#   docker exec -e BP_SESSION=gnome bp bash /src/wlup/test/run-backpressure.sh /src /out
 #
 # Results: <out>/summary.txt, and per path <out>/<path>-monitor.csv
 # (twice a second: bytes acknowledged, send queue, xrdp RSS and CPU) and
@@ -84,7 +91,9 @@ cp -a "$SRC" /build
 cd /build
 ./bootstrap > "$OUT/bootstrap.log" 2>&1
 # -Wno-error=nonnull: GCC 16 flags existing code in xrdp/xrdp_mm.c
-./configure --enable-wlup --enable-x264 --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+WLUP_MUTTER=
+[ "$BP_SESSION" = gnome ] && WLUP_MUTTER=--enable-wlup-mutter
+./configure --enable-wlup $WLUP_MUTTER --enable-x264 --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
     CFLAGS="-O2 -g -Wno-error=nonnull" > "$OUT/configure.log" 2>&1
 make -j"$(nproc)" > "$OUT/make.log" 2>&1
 make install > "$OUT/install.log" 2>&1
@@ -130,7 +139,7 @@ exec sleep infinity
 XSESSION
     chmod 755 /home/tester/.xsession
     chown tester /home/tester/.xsession
-else
+elif [ "$BP_SESSION" = sway ]; then
     mkdir -p /home/tester/.config/sway
     cat > /home/tester/.config/sway/config <<'SWAYCONF'
 output * bg #204a87 solid_color
@@ -164,6 +173,19 @@ if [ "$BP_SESSION" = xorg ]; then
     # Debian's Xorg wrapper only lets console users start X
     sed -i '/^\[Xorg\]/,/^\[/ s|^param=Xorg$|param=/usr/lib/xorg/Xorg|' \
         /etc/xrdp/sesman.ini
+elif [ "$BP_SESSION" = gnome ]; then
+    cat >> /etc/xrdp/xrdp.ini <<EOF
+
+[GNOME]
+name=GNOME (wlup prototype)
+lib=libwlup.so
+username=ask
+password=ask
+port=-1
+code=31
+backend=mutter
+EOF
+    sed -i 's/^#\?autorun=.*/autorun=GNOME/' /etc/xrdp/xrdp.ini
 else
     cat >> /etc/xrdp/xrdp.ini <<EOF
 
@@ -270,9 +292,50 @@ wait_colour() {
 in_x() {
     su tester -c "DISPLAY=$XDISPLAY XAUTHORITY=$XAUTH $*"
 }
+# Runs a command as the user inside their GNOME session
+USER_RUN=/run/user/1000
+in_session() {
+    local wl
+    wl=$(cd $USER_RUN && ls wayland-? 2> /dev/null | head -1)
+    su tester -c "export XDG_RUNTIME_DIR=$USER_RUN \
+        DBUS_SESSION_BUS_ADDRESS=unix:path=$USER_RUN/bus WAYLAND_DISPLAY=$wl; $*"
+}
+# After starting the client: waits until the session shows. GNOME starts
+# with the first connection, and wlup waits for GNOME Shell
+GNOME_STARTED=0
+session_wait_ready() {
+    local before=$1
+    if [ "$BP_SESSION" != gnome ]; then
+        sleep 8
+        return
+    fi
+    for _ in $(seq 90); do
+        [ "$(grep -c "wlup: connected to Mutter" /var/log/xrdp.log)" -gt "$before" ] && break
+        sleep 1
+    done
+    sleep 5
+    if [ $GNOME_STARTED = 0 ]; then
+        GNOME_STARTED=1
+        # Leave the overview GNOME Shell starts in; no screen lock
+        xdotool key Escape
+        in_session "gsettings set org.gnome.desktop.session idle-delay 0; \
+            gsettings set org.gnome.desktop.screensaver lock-enabled false" \
+            > /dev/null 2>&1
+        sleep 2
+    fi
+}
 # After connecting: finds the compositor (COMP_PID) and its controls
 session_attach() {
-    if [ "$BP_SESSION" = xorg ]; then
+    if [ "$BP_SESSION" = gnome ]; then
+        COMP_PID=$(pgrep -u tester -x gnome-shell)
+        if ! pgrep -u tester -f '^foot -a probe' > /dev/null; then
+            in_session "nohup foot -a probe > /tmp/foot-probe.log 2>&1 &"
+            sleep 3
+            # Tiled to the left half, where probe_point() looks
+            xdotool key super+Left
+            sleep 1
+        fi
+    elif [ "$BP_SESSION" = xorg ]; then
         COMP_PID=$(pgrep -u tester -x Xorg)
         XDISPLAY=$(tr '\0' ' ' < /proc/"$COMP_PID"/cmdline | awk '{ print $2 }')
         XAUTH=$(tr '\0' ' ' < /proc/"$COMP_PID"/cmdline |
@@ -284,7 +347,10 @@ session_attach() {
 }
 # The probed pixel: low in the probe terminal, below its text
 probe_point() {
-    if [ "$BP_SESSION" = xorg ]; then
+    if [ "$BP_SESSION" = gnome ]; then
+        PX=$((W / 4))
+        PY=$((H * 3 / 4))
+    elif [ "$BP_SESSION" = xorg ]; then
         local X Y WIDTH HEIGHT WINDOW SCREEN
         eval "$(in_x "xdotool search --name '^probe\$' getwindowgeometry --shell" |
             grep -E '^(X|Y|WIDTH|HEIGHT)=')"
@@ -299,7 +365,7 @@ probe_point() {
 # Focuses the probe terminal and points the client's pointer at it,
 # above the probed pixel
 focus_probe() {
-    if [ "$BP_SESSION" != xorg ]; then
+    if [ "$BP_SESSION" = sway ]; then
         swaymsg_ '[app_id=probe]' focus > /dev/null
         sleep 0.3
     fi
@@ -309,7 +375,9 @@ focus_probe() {
 }
 # The pid of the probe terminal, whose child is its shell
 probe_terminal_pid() {
-    if [ "$BP_SESSION" = xorg ]; then
+    if [ "$BP_SESSION" = gnome ]; then
+        pgrep -u tester -f '^foot -a probe' | head -1
+    elif [ "$BP_SESSION" = xorg ]; then
         pgrep -u tester -f '^xterm -T probe'
     else
         swaymsg_ -t get_tree |
@@ -364,7 +432,12 @@ pct() {
             i = int((NR - 1) * p / 100) + 1; print a[i] }'
 }
 busy_start() {
-    if [ "$BP_SESSION" = xorg ]; then
+    if [ "$BP_SESSION" = gnome ]; then
+        in_session "nohup foot -a busy base64 -w 150 /dev/urandom > /dev/null 2>&1 &"
+        sleep 3
+        # Tiled to the right half, next to the probe
+        xdotool key super+Right
+    elif [ "$BP_SESSION" = xorg ]; then
         in_x "xterm -T busy -geometry 100x58+640+0 -e base64 -w 150 /dev/urandom" \
             > /dev/null 2>&1 &
     else
@@ -374,7 +447,9 @@ busy_start() {
     focus_probe
 }
 busy_stop() {
-    if [ "$BP_SESSION" = xorg ]; then
+    if [ "$BP_SESSION" = gnome ]; then
+        pkill -u tester -f '^foot -a busy'
+    elif [ "$BP_SESSION" = xorg ]; then
         pkill -u tester -f '^xterm -T busy'
     else
         swaymsg_ '[app_id=busy]' kill > /dev/null
@@ -392,12 +467,14 @@ run_path() {
     PROBES=$OUT/$name-probes.csv
     echo "t_ms,input_ms,output_ms" > "$PROBES"
     log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
+    local mutter_connects
+    mutter_connects=$(grep -c "wlup: connected to Mutter" /var/log/xrdp.log)
 
     echo "=== $name: connecting ($*)"
     ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
         /size:${W}x$H -grab-keyboard "$@" > "$OUT/$name-client.log" 2>&1 &
     CLIENT=$!
-    sleep 8
+    session_wait_ready "$mutter_connects"
     session_attach
     XPID=$(xrdp_pid)
     wid=$(xdotool search --pid $CLIENT | tail -1)
