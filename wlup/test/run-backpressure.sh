@@ -170,7 +170,8 @@ for p in pb1:ff0000 pb2:00ff00 pb3:ffff00 pb4:ff00ff pb5:00ffff; do
     cat > /usr/local/bin/${p%%:*} <<EOF
 #!/bin/sh
 printf '\033[H\033[2J\033]11;#${p#*:}\007'
-date +%s%N > /tmp/probe-ran
+date +%s%N > /tmp/probe-ran.new
+mv /tmp/probe-ran.new /tmp/probe-ran
 EOF
     chmod 755 /usr/local/bin/${p%%:*}
 done
@@ -428,7 +429,8 @@ probe() {
     t0=$(date +%s%N)
     xdotool key Return
     deadline=$((t0 / 1000000 + PROBE_TIMEOUT_MS))
-    while [ "$(cat /tmp/probe-ran 2> /dev/null)" = "$before" ]; do
+    # The script renames its timestamp into place, so it is read whole
+    while t1=$(cat /tmp/probe-ran 2> /dev/null); [ -z "$t1" ] || [ "$t1" = "$before" ]; do
         if [ "$(now_ms)" -gt $deadline ]; then
             echo "$((t0 / 1000000)),-1,-1" >> "$PROBES"
             echo -1
@@ -436,7 +438,6 @@ probe() {
         fi
         sleep 0.02
     done
-    t1=$(cat /tmp/probe-ran)
     if wait_colour $mask $deadline; then
         t2=$(date +%s%N)
         echo "$((t0 / 1000000)),$(((t1 - t0) / 1000000)),$(((t2 - t1) / 1000000))" >> "$PROBES"
