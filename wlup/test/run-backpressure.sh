@@ -65,6 +65,14 @@
 #       --tmpfs /run/lock -v ... xrdp-wlup-mutter /usr/lib/systemd/systemd
 #   docker exec -e BP_SESSION=gnome bp bash /src/wlup/test/run-backpressure.sh /src /out
 #
+# Optional settings:
+#   BP_P90_LIMITS     slow-link delay limits per path, default
+#                     "h264=2000 gfx-rfx=2000 bitmap=2000" (ms, 90th percentile)
+#   BP_NOTSENT_LOWAT  sets tcp_notsent_lowat in xrdp.ini to this many bytes
+#   BP_REQUIRE_SHAPE  1: fail if tc netem is not available, instead of
+#                     skipping the slow link (for CI)
+# The exit status is 1 if any check failed.
+#
 # Results: <out>/summary.txt, and per path <out>/<path>-monitor.csv
 # (twice a second: bytes acknowledged, send queue, xrdp RSS and CPU) and
 # <out>/<path>-probes.csv.
@@ -81,6 +89,9 @@ BP_PATHS=${BP_PATHS:-"h264 gfx-rfx bitmap"}
 BP_RATE=${BP_RATE:-4mbit}
 BP_DELAY=${BP_DELAY:-80ms}
 BP_SLOW_S=${BP_SLOW_S:-30}
+BP_P90_LIMITS=${BP_P90_LIMITS:-"h264=2000 gfx-rfx=2000 bitmap=2000"}
+BP_NOTSENT_LOWAT=${BP_NOTSENT_LOWAT:-}
+BP_REQUIRE_SHAPE=${BP_REQUIRE_SHAPE:-0}
 PROBE_TIMEOUT_MS=20000
 CLK_TCK=$(getconf CLK_TCK)
 
@@ -119,6 +130,10 @@ SHAPE=0
 if tc qdisc add dev lo root netem delay 1ms 2> "$OUT/tc.log" &&
         tc qdisc del dev lo root 2>> "$OUT/tc.log"; then
     SHAPE=1
+elif [ "$BP_REQUIRE_SHAPE" = 1 ]; then
+    echo "tc netem is not available (load sch_netem on the host):"
+    cat "$OUT/tc.log"
+    exit 1
 fi
 link_slow() {
     tc qdisc add dev lo root netem delay "$BP_DELAY" rate "$BP_RATE" limit 100
@@ -202,6 +217,12 @@ EOF
 fi
 sed -i 's/^LogLevel=.*/LogLevel=DEBUG/' /etc/xrdp/xrdp.ini
 sed -i 's/^LogLevel=.*/LogLevel=DEBUG/' /etc/xrdp/sesman.ini
+if [ -n "$BP_NOTSENT_LOWAT" ]; then
+    sed -i "s/^#\?tcp_notsent_lowat=.*/tcp_notsent_lowat=$BP_NOTSENT_LOWAT/" \
+        /etc/xrdp/xrdp.ini
+    grep -q "^tcp_notsent_lowat=" /etc/xrdp/xrdp.ini ||
+        echo "warning: this xrdp.ini has no tcp_notsent_lowat"
+fi
 xrdp-sesman --nodaemon > "$OUT/sesman.log" 2>&1 &
 xrdp --nodaemon > "$OUT/xrdp.log" 2>&1 &
 sleep 2
@@ -321,7 +342,8 @@ session_wait_ready() {
         in_session "gsettings set org.gnome.desktop.session idle-delay 0; \
             gsettings set org.gnome.desktop.screensaver lock-enabled false" \
             > /dev/null 2>&1
-        sleep 2
+        # GNOME repaints once more as it settles
+        sleep 10
     fi
 }
 # After connecting: finds the compositor (COMP_PID) and its controls
@@ -616,6 +638,14 @@ check() {
         echo "FAIL  $1"; fail=$((fail + 1))
     fi
 }
+# p90_limit <path>: the slow-link delay limit for a path, from BP_P90_LIMITS
+p90_limit() {
+    local kv
+    for kv in $BP_P90_LIMITS; do
+        [ "${kv%%=*}" = "$1" ] && { echo "${kv#*=}"; return; }
+    done
+    echo 2000
+}
 lt() { # lt <a> <b>: a < b, for decimals; n/a and - are false
     awk -v a="$1" -v b="$2" 'BEGIN { exit !(a ~ /^-?[0-9.]+$/ && a + 0 < b + 0) }'
 }
@@ -651,7 +681,8 @@ while read -r name mode i1 i2 i3 b1 b2 b3 s1 s2 s3 h1 h2 h3 fp sp50 sp90 smax fm
     [ "$name" = h264 ] && check "$name: frames go to the H.264 encoder" '[ "$mode" = h264 ]'
     check "$name: S1 idle screen sends < 5 KB/s" 'lt "$i1" 5'
     if [ $SHAPE = 1 ]; then
-        check "$name: S3 slow link, probe delay p90 < 2000 ms" 'lt "$sp90" 2000'
+        check "$name: S3 slow link, probe delay p90 < $(p90_limit "$name") ms" \
+            'lt "$sp90" "$(p90_limit "$name")"'
         check "$name: S3 slow link, delay does not grow (last third <= 1.5 x first third + 300 ms)" \
             'lt "$lm" "$(awk -v f="$fm" "BEGIN { print f * 1.5 + 300 }")"'
         check "$name: S3 slow link, xrdp grows < 20 MB from 10 s to the end" \
@@ -675,3 +706,4 @@ echo "passed $pass, failed $fail, skipped $skip"
 
 cp /var/log/xrdp.log "$OUT/xrdp-file.log" 2> /dev/null
 chmod -R a+r "$OUT"
+! grep -q "^FAIL" "$OUT/summary.txt"
