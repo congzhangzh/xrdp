@@ -303,8 +303,9 @@ is_colour() {
     done
 }
 # wait_colour <colour> <deadline ms>: return 1 on timeout
+# The last pixel read is in LAST_RGB
 wait_colour() {
-    while ! is_colour "$1" $(pixel "$PX" "$PY"); do
+    while LAST_RGB=$(pixel "$PX" "$PY"); ! is_colour "$1" $LAST_RGB; do
         [ "$(now_ms)" -gt "$2" ] && return 1
     done
     return 0
@@ -423,6 +424,7 @@ probe() {
     local cmd mask before t0 t1 t2 deadline
     cmd=pb$((NEXT + 1))
     mask=${MASKS[$NEXT]}
+    PREV_MASK=${MASKS[$(((NEXT + 4) % 5))]}
     NEXT=$(((NEXT + 1) % 5))
     before=$(cat /tmp/probe-ran 2> /dev/null)
     xdotool type --delay 20 "$cmd"
@@ -444,6 +446,11 @@ probe() {
         echo $(((t2 - t1) / 1000000))
     else
         echo "$((t0 / 1000000)),$(((t1 - t0) / 1000000)),-1" >> "$PROBES"
+        # What the client showed instead: the colour before (a lost update)
+        # or something near the one wanted (picture quality)?
+        echo "probe at $((t0 / 1000000)) ms: wanted $mask, was $PREV_MASK," \
+             "the client showed $LAST_RGB" >> "$OUT/$NAME-timeouts.txt"
+        import -window root "$OUT/$NAME-timeout-$((t0 / 1000000)).png" || true
         echo -1
     fi
 }
@@ -487,6 +494,7 @@ run_path() {
     local fast_p50 slow_p50 slow_p90 slow_max first_med last_med rss10 rss_end
     local sendq_max recover_ms suppressed resume_ms mode
     shift
+    NAME=$name
     PROBES=$OUT/$name-probes.csv
     echo "t_ms,input_ms,output_ms" > "$PROBES"
     log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
