@@ -46,3 +46,37 @@ jobs:
           name: wlup-e2e-logs
           path: ${{ runner.temp }}/wlup-test
           if-no-files-found: ignore
+
+  # Slow-link behaviour (wlup/test/run-backpressure.sh): delay before a
+  # change shows, memory, output while hidden. Each session on its own
+  # runner, as the test measures time
+  backpressure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        session: [sway, xorg, gnome]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Load sch_netem for the slow link
+        run: |
+          sudo modprobe sch_netem || {
+            sudo apt-get update
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+            sudo modprobe sch_netem
+          }
+
+      - name: Run the ${{ matrix.session }} session
+        run: wlup/test/run-backpressure-all.sh "$RUNNER_TEMP/bp" ${{ matrix.session }}
+
+      - name: Keep results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wlup-backpressure-${{ matrix.session }}
+          path: ${{ runner.temp }}/bp
+          if-no-files-found: ignore
