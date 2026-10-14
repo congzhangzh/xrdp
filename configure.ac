@@ -729,6 +729,7 @@ AC_CONFIG_FILES([
   tests/libxrdp/Makefile
   tests/memtest/Makefile
   tests/xrdp/Makefile
+  tests/wlup/Makefile
   tools/Makefile
   tools/devel/Makefile
   tools/devel/tcp_proxy/Makefile
