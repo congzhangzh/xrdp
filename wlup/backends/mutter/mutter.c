@@ -201,6 +201,84 @@ copy_region(struct wlup *v, const uint8_t *src, int src_stride,
 }
 
 /******************************************************************************/
+#define DETECT_TILE 64
+
+/* Adds a rect to a damage list; returns 1 if the list is full */
+static int
+add_rect(short *rects, int *num_rects, int x, int y, int cx, int cy)
+{
+    if (*num_rects >= WLUP_MAX_DAMAGE)
+    {
+        return 1;
+    }
+    rects[*num_rects * 4] = x;
+    rects[*num_rects * 4 + 1] = y;
+    rects[*num_rects * 4 + 2] = cx;
+    rects[*num_rects * 4 + 3] = cy;
+    ++*num_rects;
+    return 0;
+}
+
+/* Finds what changed by comparing a PipeWire buffer with our desktop copy
+ * in tiles, and copies the tiles that differ. Mutter's damage metadata
+ * can't be trusted: now and then a buffer carries a change outside its
+ * damage, and nothing later repaints it. Each run of changed tiles in a
+ * tile row adds one rect. Returns 1 when the rects did not fit (all tiles
+ * are still copied) */
+static int
+detect_damage(struct wlup *v, const uint8_t *src, int src_stride,
+              int width, int height, short *rects, int *num_rects)
+{
+    int dst_stride = v->buffer_width * 4;
+    int overflow = 0;
+    int tx;
+    int ty;
+    int row;
+
+    width = MIN(width, v->buffer_width);
+    height = MIN(height, v->buffer_height);
+    for (ty = 0; ty < height; ty += DETECT_TILE)
+    {
+        int th = MIN(DETECT_TILE, height - ty);
+        int run_x = -1;
+
+        for (tx = 0; tx < width; tx += DETECT_TILE)
+        {
+            int tw = MIN(DETECT_TILE, width - tx);
+            int dirty = 0;
+
+            for (row = ty; row < ty + th && !dirty; ++row)
+            {
+                dirty = memcmp(v->pixels + (size_t)row * dst_stride + tx * 4,
+                               src + (size_t)row * src_stride + tx * 4,
+                               (size_t)tw * 4) != 0;
+            }
+            if (dirty)
+            {
+                copy_region(v, src, src_stride, tx, ty, tw, th);
+                if (run_x < 0)
+                {
+                    run_x = tx;
+                }
+            }
+            else if (run_x >= 0)
+            {
+                overflow |= add_rect(rects, num_rects, run_x, ty,
+                                     tx - run_x, th);
+                run_x = -1;
+            }
+        }
+        if (run_x >= 0)
+        {
+            /* The run reaches the right edge */
+            overflow |= add_rect(rects, num_rects, run_x, ty,
+                                 width - run_x, th);
+        }
+    }
+    return overflow;
+}
+
+/******************************************************************************/
 /* Sends the pointer shape in a buffer's cursor metadata to the client,
  * which then draws the pointer itself, so it follows the mouse at once
  * rather than a round trip later in the frames */
@@ -330,9 +408,10 @@ on_process(void *data)
     struct wlup *v = (struct wlup *)data;
     struct wlup_mutter *m = (struct wlup_mutter *)v->backend_data;
     struct pw_buffer *pb;
-    short rects[MAX_DAMAGE * 4];
+    short rects[WLUP_MAX_DAMAGE * 4];
     int num_rects = 0;
     int full = v->need_full_paint;
+    int first;
     int i;
 
     /* Take every queued buffer, so no damage is lost when frames
@@ -367,26 +446,46 @@ on_process(void *data)
         else
         {
             struct spa_meta_region *r;
+            int mx1 = m->width;
+            int my1 = m->height;
+            int mx2 = 0;
+            int my2 = 0;
+
+            /* Mutter's damage, only to log it */
             spa_meta_for_each(r, dm)
             {
                 if (!spa_meta_region_is_valid(r))
                 {
                     break;
                 }
-                copy_region(v, src, stride, r->region.position.x,
-                            r->region.position.y, r->region.size.width,
-                            r->region.size.height);
-                if (num_rects < MAX_DAMAGE)
+                mx1 = MIN(mx1, r->region.position.x);
+                my1 = MIN(my1, r->region.position.y);
+                mx2 = MAX(mx2, r->region.position.x +
+                          (int)r->region.size.width);
+                my2 = MAX(my2, r->region.position.y +
+                          (int)r->region.size.height);
+            }
+            if (mx2 > mx1)
+            {
+                LOG(LOG_LEVEL_DEBUG, "wlup: Mutter damage in %d,%d-%d,%d",
+                    mx1, my1, mx2, my2);
+            }
+            first = num_rects;
+            if (detect_damage(v, src, stride, m->width, m->height,
+                              rects, &num_rects))
+            {
+                full = 1;
+            }
+            for (i = first; i < num_rects; ++i)
+            {
+                if (rects[i * 4] + rects[i * 4 + 2] <= mx1 ||
+                        rects[i * 4] >= mx2 ||
+                        rects[i * 4 + 1] + rects[i * 4 + 3] <= my1 ||
+                        rects[i * 4 + 1] >= my2)
                 {
-                    rects[num_rects * 4] = r->region.position.x;
-                    rects[num_rects * 4 + 1] = r->region.position.y;
-                    rects[num_rects * 4 + 2] = r->region.size.width;
-                    rects[num_rects * 4 + 3] = r->region.size.height;
-                    ++num_rects;
-                }
-                else
-                {
-                    full = 1;
+                    LOG(LOG_LEVEL_DEBUG, "wlup: changed %d,%d %dx%d is "
+                        "outside Mutter's damage", rects[i * 4],
+                        rects[i * 4 + 1], rects[i * 4 + 2], rects[i * 4 + 3]);
                 }
             }
         }
@@ -395,7 +494,7 @@ on_process(void *data)
 
     if (full)
     {
-        LOG(LOG_LEVEL_DEBUG, "wlup: Mutter damage: all");
+        LOG(LOG_LEVEL_DEBUG, "wlup: damage: all");
     }
     else if (num_rects > 0)
     {
@@ -411,8 +510,8 @@ on_process(void *data)
             x2 = MAX(x2, rects[i * 4] + rects[i * 4 + 2]);
             y2 = MAX(y2, rects[i * 4 + 1] + rects[i * 4 + 3]);
         }
-        LOG(LOG_LEVEL_DEBUG, "wlup: Mutter damage: %d rects in %d,%d-%d,%d",
-            num_rects, x1, y1, x2, y2);
+        LOG(LOG_LEVEL_DEBUG, "wlup: detected damage: %d rects in "
+            "%d,%d-%d,%d", num_rects, x1, y1, x2, y2);
     }
     if (v->suppress_output || (!full && num_rects == 0))
     {
