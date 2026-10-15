@@ -37,9 +37,11 @@ cp -a "$SRC" /build
 cd /build
 ./bootstrap > "$OUT/bootstrap.log" 2>&1
 # -Wno-error=nonnull: GCC 16 flags existing code in xrdp/xrdp_mm.c
-# AV1 (FreeRDP's GFX extension) when libaom is there
+# AV1 (FreeRDP's GFX extension) when libaom is there; sound as Opus when
+# libopus is
 AV1_OPT=$(pkg-config --exists aom && echo --enable-av1)
-./configure --enable-wlup --enable-fuse --enable-x264 $AV1_OPT --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+OPUS_OPT=$(pkg-config --exists opus && echo --enable-opus)
+./configure --enable-wlup --enable-fuse --enable-x264 $AV1_OPT $OPUS_OPT --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
     CFLAGS="-O2 -g -Wno-error=nonnull" > "$OUT/configure.log" 2>&1
 make -j"$(nproc)" > "$OUT/make.log" 2>&1
 make install > "$OUT/install.log" 2>&1
@@ -460,6 +462,24 @@ if [ "$(cat /proc/1/comm)" = systemd ]; then
         'grep -q "node.name = \"xrdp-sink\"" "$OUT/pw-nodes.txt"'
     check "audio: the client received sound (10+ Wave PDUs)" \
         '[ "$(grep -c "WaveInfo:" "$OUT/client-audio.log")" -ge 10 ]'
+    if grep -q "opus *yes" "$OUT/configure.log"; then
+        # chansrv compresses with Opus when the client takes it. FreeRDP
+        # names no Opus tag (WAVE_FORMAT_UNKNOWN), so compare numbers: the
+        # format the waves come in (wFormatNo) must be where Opus is in the
+        # list of formats chansrv logged as the client's
+        cp /home/tester/.local/share/xrdp/xrdp-chansrv.*.log "$OUT/" 2>/dev/null || true
+        # (playback formats only: the microphone's are logged too)
+        OPUS_INDEX=$(awk '/sound_process_output_format:/ { f = 1; next }
+                          f && /wFormatTag/ { print; f = 0 }' \
+                         "$OUT"/xrdp-chansrv.*.log 2>/dev/null |
+                     grep -n "WAVE_FORMAT_OPUS" | head -1 | cut -d: -f1)
+        OPUS_INDEX=$((${OPUS_INDEX:-0} - 1))
+        WAVE_FORMATS=$(grep -o "WaveInfo: cBlockNo: [0-9]* wFormatNo: [0-9]*" \
+                       "$OUT/client-audio.log" | awk '{print $NF}' | sort -u)
+        echo "audio: Opus is client format $OPUS_INDEX, waves came as $WAVE_FORMATS"
+        check "audio: the sound comes as Opus, not PCM" \
+            '[ "$OPUS_INDEX" -ge 0 ] && [ "$WAVE_FORMATS" = "$OPUS_INDEX" ]'
+    fi
 fi
 echo "passed $pass, failed $fail"
 
