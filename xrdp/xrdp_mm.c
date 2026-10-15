@@ -422,6 +422,28 @@ xrdp_mm_get_session_fds(struct xrdp_mm *self)
 }
 
 /*****************************************************************************/
+/* AV1 in 4:4:4 needs frames with the full colour resolution
+ * (XRDP_yuv444_709fr), which only wlup sends: Wayland and GNOME sessions.
+ * The client offers it before the user logs in, so this runs again once
+ * the session type is known, before the module gets the client info */
+static void
+xrdp_mm_update_av1_444(struct xrdp_mm *self)
+{
+    struct xrdp_client_info *ci = self->wm->client_info;
+
+    if ((self->egfx_flags & XRDP_EGFX_AV1) != 0 &&
+            self->av1_444_allowed &&
+            (self->code == WAYLAND_SESSION_CODE ||
+             self->code == GNOME_SESSION_CODE) &&
+            (self->egfx_flags & XRDP_EGFX_AV1_444) == 0)
+    {
+        LOG(LOG_LEVEL_INFO, "AV1 in 4:4:4: frames come as yuv444");
+        self->egfx_flags |= XRDP_EGFX_AV1_444;
+        ci->capture_format = XRDP_yuv444_709fr;
+    }
+}
+
+/*****************************************************************************/
 /* In Wayland and GNOME sessions, the module provides the clipboard
  * itself (chansrv's clipboard needs X11), and chansrv the other
  * channels */
@@ -1349,6 +1371,10 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
             LOG(LOG_LEVEL_INFO, "Matched AV1 mode");
             best_index = best_av1_index;
             self->egfx_flags = XRDP_EGFX_H264 | XRDP_EGFX_AV1;
+            flags = ver_flags[best_index].flags;
+            self->av1_444_allowed =
+                (flags & XR_RDPGFX_CAPS_FLAG_AV1_I444_SUPPORTED) != 0 &&
+                (flags & XR_RDPGFX_CAPS_FLAG_AV1_I444_DISABLED) == 0;
             break;
         }
 #endif
@@ -5713,6 +5739,8 @@ xrdp_mm_setup_mod2(struct xrdp_mm *self)
 
         /* always set these */
 
+        /* The session type is known now */
+        xrdp_mm_update_av1_444(self);
         mod->mod_set_param(mod, "client_info",
                            (const char *) (self->wm->session->client_info));
 

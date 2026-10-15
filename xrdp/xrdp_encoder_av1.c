@@ -24,6 +24,10 @@
  *   - the input is the same: NV12, BT.709 full range, with the rects that
  *     changed. They are copied into a 4:2:0 picture (I420) kept per
  *     monitor, which is then encoded whole
+ *   - when the client decodes 4:4:4 and the module can send it (wlup),
+ *     the input is XRDP_yuv444_709fr instead, a 32-bit pixel each
+ *     (0xff << 24 | V << 16 | U << 8 | Y), and the picture I444: AV1
+ *     profile 1, colour at full resolution, so coloured text stays sharp
  *   - libaom in real-time mode, tuned for screen content, as
  *     gnome-remote-desktop's AV1 encode session: no lag, constant
  *     quality, key frames only when the encoder is new
@@ -65,7 +69,8 @@ struct av1_encoder
 {
     aom_codec_ctx_t ctx;
     int open;
-    uint8_t *yuvdata;   /* I420: Y, then U, then V */
+    int yuv444;         /* I444 (profile 1), else I420 */
+    uint8_t *yuvdata;   /* Y, then U, then V */
     aom_image_t image;  /* yuvdata, as libaom sees it */
     int width;          /* the size asked for */
     int height;
@@ -129,15 +134,18 @@ xrdp_encoder_av1_delete(void *handle)
 
 /* Opens an encoder for width x height. Returns 0 on success */
 static int
-av1_open(struct av1_encoder *ae, int width, int height)
+av1_open(struct av1_encoder *ae, int width, int height, int yuv444)
 {
     aom_codec_iface_t *iface = aom_codec_av1_cx();
     aom_codec_enc_cfg_t cfg;
     size_t y_bytes;
+    size_t uv_bytes;
     aom_codec_err_t err;
 
+    /* even for 4:2:0; the client crops what is beyond the surface */
     ae->pic_width = (width + 1) & ~1;
     ae->pic_height = (height + 1) & ~1;
+    ae->yuv444 = yuv444;
     err = aom_codec_enc_config_default(iface, &cfg, AOM_USAGE_REALTIME);
     if (err != AOM_CODEC_OK)
     {
@@ -147,7 +155,7 @@ av1_open(struct av1_encoder *ae, int width, int height)
     }
     cfg.g_w = ae->pic_width;
     cfg.g_h = ae->pic_height;
-    cfg.g_profile = 0;          /* 4:2:0 */
+    cfg.g_profile = yuv444 ? 1 : 0; /* 4:4:4 needs profile 1 */
     cfg.g_timebase.num = 1;
     cfg.g_timebase.den = AV1_FPS;
     cfg.g_threads = AV1_THREADS;
@@ -174,21 +182,23 @@ av1_open(struct av1_encoder *ae, int width, int height)
 
     /* Black until painted: the first frame covers everything anyway */
     y_bytes = (size_t)ae->pic_width * ae->pic_height;
-    ae->yuvdata = g_new(uint8_t, y_bytes + y_bytes / 2);
+    uv_bytes = yuv444 ? y_bytes * 2 : y_bytes / 2;
+    ae->yuvdata = g_new(uint8_t, y_bytes + uv_bytes);
     if (ae->yuvdata == NULL)
     {
         av1_close(ae);
         return 1;
     }
     memset(ae->yuvdata, 0, y_bytes);
-    memset(ae->yuvdata + y_bytes, 128, y_bytes / 2);
-    aom_img_wrap(&ae->image, AOM_IMG_FMT_I420, ae->pic_width,
-                 ae->pic_height, 1, ae->yuvdata);
+    memset(ae->yuvdata + y_bytes, 128, uv_bytes);
+    aom_img_wrap(&ae->image, yuv444 ? AOM_IMG_FMT_I444 : AOM_IMG_FMT_I420,
+                 ae->pic_width, ae->pic_height, 1, ae->yuvdata);
     ae->width = width;
     ae->height = height;
     ae->pts = 0;
-    LOG(LOG_LEVEL_INFO, "xrdp_encoder_av1: encoder for %dx%d (picture %dx%d)",
-        width, height, ae->pic_width, ae->pic_height);
+    LOG(LOG_LEVEL_INFO, "xrdp_encoder_av1: encoder for %dx%d (picture %dx%d, "
+        "%s)", width, height, ae->pic_width, ae->pic_height,
+        yuv444 ? "4:4:4" : "4:2:0");
     return 0;
 }
 
@@ -238,6 +248,41 @@ copy_nv12_rect(struct av1_encoder *ae, const char *data, int twidth,
 }
 
 /*****************************************************************************/
+/* Copies a rect of XRDP_yuv444_709fr (a 32-bit pixel each, with a stride
+ * of twidth pixels) into the I444 picture */
+static void
+copy_yuv444_rect(struct av1_encoder *ae, const char *data, int twidth,
+                 int left, int top, int x, int y, int cx, int cy)
+{
+    int pw = ae->pic_width;
+    size_t plane = (size_t)pw * ae->pic_height;
+    int dx = x - left;
+    int dy = y - top;
+    int row;
+    int i;
+
+    cx = MIN(cx, pw - dx);
+    cy = MIN(cy, ae->pic_height - dy);
+    if (dx < 0 || dy < 0 || cx <= 0 || cy <= 0)
+    {
+        return;
+    }
+    for (row = 0; row < cy; row++)
+    {
+        const uint32_t *s = (const uint32_t *)data +
+                            (size_t)(y + row) * twidth + x;
+        uint8_t *d = ae->yuvdata + (size_t)(dy + row) * pw + dx;
+
+        for (i = 0; i < cx; i++)
+        {
+            d[i] = s[i] & 0xff;                     /* Y */
+            d[plane + i] = (s[i] >> 8) & 0xff;      /* U */
+            d[plane * 2 + i] = (s[i] >> 16) & 0xff; /* V */
+        }
+    }
+}
+
+/*****************************************************************************/
 /* Returns 0 on success, as xrdp_encoder_x264_encode(): 1 or 2 when no
  * encoder could be made, 3 when it gave no frame, 4 when the frame did
  * not fit cdata. flags: 1 a new encoder (a key frame), 2 the old one
@@ -258,8 +303,10 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
     int flags = 0;
     int out_bytes = 0;
     int index;
+    int yuv444 = format == XRDP_yuv444_709fr;
 
-    if (!ae->open || ae->width != width || ae->height != height)
+    if (!ae->open || ae->width != width || ae->height != height ||
+            ae->yuv444 != yuv444)
     {
         if (ae->open)
         {
@@ -270,7 +317,7 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
         {
             return 1;
         }
-        if (av1_open(ae, width, height) != 0)
+        if (av1_open(ae, width, height, yuv444) != 0)
         {
             return 2;
         }
@@ -280,9 +327,18 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
     {
         for (index = 0; index < num_crects; index++)
         {
-            copy_nv12_rect(ae, data, twidth, theight, left, top,
-                           crects[index * 4], crects[index * 4 + 1],
-                           crects[index * 4 + 2], crects[index * 4 + 3]);
+            if (yuv444)
+            {
+                copy_yuv444_rect(ae, data, twidth, left, top,
+                                 crects[index * 4], crects[index * 4 + 1],
+                                 crects[index * 4 + 2], crects[index * 4 + 3]);
+            }
+            else
+            {
+                copy_nv12_rect(ae, data, twidth, theight, left, top,
+                               crects[index * 4], crects[index * 4 + 1],
+                               crects[index * 4 + 2], crects[index * 4 + 3]);
+            }
         }
         err = aom_codec_encode(&ae->ctx, &ae->image, ae->pts++, 1, 0);
         if (err != AOM_CODEC_OK)
