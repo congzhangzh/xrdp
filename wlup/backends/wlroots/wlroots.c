@@ -788,7 +788,7 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
         /* Prototype: the first output is the RDP desktop. Version 4 has
          * the output name, used to find it in wlr-output-management */
         w->output = (struct wl_output *)wl_registry_bind(registry, name, &wl_output_interface,
-                                     MIN(version, 4));
+                    MIN(version, 4));
         wl_output_add_listener(w->output, &output_listener, v);
     }
     else if (strcmp(interface,
@@ -796,26 +796,26 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
              == 0)
     {
         w->source_manager = (struct ext_output_image_capture_source_manager_v1 *)wl_registry_bind(registry, name,
-                                             &ext_output_image_capture_source_manager_v1_interface, 1);
+                            &ext_output_image_capture_source_manager_v1_interface, 1);
     }
     else if (strcmp(interface,
                     ext_image_copy_capture_manager_v1_interface.name) == 0)
     {
         w->copy_manager = (struct ext_image_copy_capture_manager_v1 *)wl_registry_bind(registry, name,
-                                           &ext_image_copy_capture_manager_v1_interface, 1);
+                          &ext_image_copy_capture_manager_v1_interface, 1);
     }
     else if (strcmp(interface,
                     zwlr_virtual_pointer_manager_v1_interface.name) == 0)
     {
         w->pointer_manager_version = MIN(version, 2);
         w->pointer_manager = (struct zwlr_virtual_pointer_manager_v1 *)wl_registry_bind(registry, name,
-                                              &zwlr_virtual_pointer_manager_v1_interface,
-                                              w->pointer_manager_version);
+                             &zwlr_virtual_pointer_manager_v1_interface,
+                             w->pointer_manager_version);
     }
     else if (strcmp(interface, zwlr_output_manager_v1_interface.name) == 0)
     {
         w->output_manager = (struct zwlr_output_manager_v1 *)wl_registry_bind(registry, name,
-                                             &zwlr_output_manager_v1_interface, 1);
+                            &zwlr_output_manager_v1_interface, 1);
         zwlr_output_manager_v1_add_listener(w->output_manager,
                                             &manager_listener, v);
     }
@@ -823,7 +823,7 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
                     zwp_virtual_keyboard_manager_v1_interface.name) == 0)
     {
         w->keyboard_manager = (struct zwp_virtual_keyboard_manager_v1 *)wl_registry_bind(registry, name,
-                                               &zwp_virtual_keyboard_manager_v1_interface, 1);
+                              &zwp_virtual_keyboard_manager_v1_interface, 1);
     }
     else if (w->wlr_clip == NULL)
     {
