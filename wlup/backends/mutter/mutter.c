@@ -147,12 +147,11 @@ struct wlup_mutter
     char *client_text;      /* the RDP client's clipboard text */
     int client_text_len;
     /* Damage copied while the core wanted no frames (wlup_wants_frames()),
-     * as a bounding box, painted once it does again */
-    int held;
-    int held_x1;
-    int held_y1;
-    int held_x2;
-    int held_y2;
+     * painted once it does again: x, y, cx, cy per rect, or one
+     * bounding box once they don't fit */
+    short held[WLUP_MAX_DAMAGE * 4];
+    int num_held;
+    int held_box;
 };
 
 /* MIME types accepted and offered for text, best first */
@@ -386,19 +385,77 @@ update_pointer(struct wlup *v, struct spa_buffer *buf)
 static void
 hold_damage(struct wlup_mutter *m, int x, int y, int cx, int cy)
 {
-    if (!m->held)
+    short *h = m->held;
+    int i;
+
+    for (i = 0; i < m->num_held; ++i)
     {
-        m->held = 1;
-        m->held_x1 = x;
-        m->held_y1 = y;
-        m->held_x2 = x + cx;
-        m->held_y2 = y + cy;
+        if (x >= h[i * 4] && y >= h[i * 4 + 1] &&
+                x + cx <= h[i * 4] + h[i * 4 + 2] &&
+                y + cy <= h[i * 4 + 1] + h[i * 4 + 3])
+        {
+            /* Already held: what changes again and again (an animation,
+             * a busy window) stays one rect */
+            return;
+        }
+    }
+    if (!m->held_box && m->num_held < WLUP_MAX_DAMAGE)
+    {
+        h[m->num_held * 4] = x;
+        h[m->num_held * 4 + 1] = y;
+        h[m->num_held * 4 + 2] = cx;
+        h[m->num_held * 4 + 3] = cy;
+        ++m->num_held;
         return;
     }
-    m->held_x1 = MIN(m->held_x1, x);
-    m->held_y1 = MIN(m->held_y1, y);
-    m->held_x2 = MAX(m->held_x2, x + cx);
-    m->held_y2 = MAX(m->held_y2, y + cy);
+    /* Too many: a bounding box of them all, in h[0..3] */
+    for (i = 1; i < m->num_held; ++i)
+    {
+        int x2 = MAX(h[0] + h[2], h[i * 4] + h[i * 4 + 2]);
+        int y2 = MAX(h[1] + h[3], h[i * 4 + 1] + h[i * 4 + 3]);
+
+        h[0] = MIN(h[0], h[i * 4]);
+        h[1] = MIN(h[1], h[i * 4 + 1]);
+        h[2] = x2 - h[0];
+        h[3] = y2 - h[1];
+    }
+    {
+        int x2 = MAX(h[0] + h[2], x + cx);
+        int y2 = MAX(h[1] + h[3], y + cy);
+
+        h[0] = MIN(h[0], x);
+        h[1] = MIN(h[1], y);
+        h[2] = x2 - h[0];
+        h[3] = y2 - h[1];
+    }
+    m->num_held = 1;
+    m->held_box = 1;
+}
+
+/******************************************************************************/
+/* Sorts the held rects top to bottom, then left to right: painted in the
+ * order they were held, a change that came last waits behind everything
+ * held before it, however far down the screen that is */
+static void
+sort_held(struct wlup_mutter *m)
+{
+    short *h = m->held;
+    int i;
+    int j;
+
+    for (i = 1; i < m->num_held; ++i)
+    {
+        short r[4];
+
+        memcpy(r, &h[i * 4], sizeof(r));
+        for (j = i; j > 0 && (h[(j - 1) * 4 + 1] > r[1] ||
+                              (h[(j - 1) * 4 + 1] == r[1] &&
+                               h[(j - 1) * 4] > r[0])); --j)
+        {
+            memcpy(&h[j * 4], &h[(j - 1) * 4], sizeof(r));
+        }
+        memcpy(&h[j * 4], r, sizeof(r));
+    }
 }
 
 /******************************************************************************/
@@ -520,9 +577,9 @@ on_process(void *data)
     if (!wlup_wants_frames(v))
     {
         /* Much of what was painted still waits for the client. Frames
-         * keep coming, as PipeWire's damage is relative to the last
-         * buffer, but they are only copied; mutter_frames_wanted()
-         * paints what changed once xrdp has sent most of it */
+         * keep coming and are copied, as the damage is found against
+         * our copy, but not painted: mutter_frames_wanted() paints what
+         * changed once xrdp has sent most of it */
         if (full)
         {
             hold_damage(m, 0, 0, m->width, m->height);
@@ -1666,16 +1723,22 @@ static void
 mutter_frames_wanted(struct wlup *v)
 {
     struct wlup_mutter *m = (struct wlup_mutter *)v->backend_data;
+    int i;
 
-    if (m == NULL || !m->held || !wlup_wants_frames(v))
+    if (m == NULL || m->num_held == 0 || !wlup_wants_frames(v))
     {
         return;
     }
-    m->held = 0;
+    sort_held(m);
     v->server_begin_update(v);
-    wlup_paint_region(v, m->held_x1, m->held_y1,
-                      m->held_x2 - m->held_x1, m->held_y2 - m->held_y1);
+    for (i = 0; i < m->num_held; ++i)
+    {
+        wlup_paint_region(v, m->held[i * 4], m->held[i * 4 + 1],
+                          m->held[i * 4 + 2], m->held[i * 4 + 3]);
+    }
     v->server_end_update(v);
+    m->num_held = 0;
+    m->held_box = 0;
 }
 
 /******************************************************************************/
