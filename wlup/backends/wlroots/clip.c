@@ -310,7 +310,8 @@ wlup_wlr_clip_bind(struct wlup *v, struct wl_registry *registry,
         return 0;
     }
     c = (struct wlup_wlr_clip *)g_malloc(sizeof(*c), 1);
-    c->manager = wl_registry_bind(registry, name,
+    c->manager = (struct ext_data_control_manager_v1 *)
+                 wl_registry_bind(registry, name,
                                   &ext_data_control_manager_v1_interface, 1);
     w->wlr_clip = c;
     return 1;

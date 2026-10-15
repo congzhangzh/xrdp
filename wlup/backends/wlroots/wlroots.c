@@ -120,7 +120,8 @@ alloc_buffer(struct wlup *v, int width, int height, uint32_t format)
         close(fd);
         return 1;
     }
-    v->pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    v->pixels = (char *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                             fd, 0);
     if (v->pixels == MAP_FAILED)
     {
         LOG(LOG_LEVEL_ERROR, "wlup: mmap failed: %s", strerror(errno));
@@ -775,18 +776,18 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
 
     if (strcmp(interface, wl_shm_interface.name) == 0)
     {
-        w->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+        w->shm = (struct wl_shm *)wl_registry_bind(registry, name, &wl_shm_interface, 1);
     }
     else if (strcmp(interface, wl_seat_interface.name) == 0 && w->seat == NULL)
     {
-        w->seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+        w->seat = (struct wl_seat *)wl_registry_bind(registry, name, &wl_seat_interface, 1);
     }
     else if (strcmp(interface, wl_output_interface.name) == 0 &&
              w->output == NULL)
     {
         /* Prototype: the first output is the RDP desktop. Version 4 has
          * the output name, used to find it in wlr-output-management */
-        w->output = wl_registry_bind(registry, name, &wl_output_interface,
+        w->output = (struct wl_output *)wl_registry_bind(registry, name, &wl_output_interface,
                                      MIN(version, 4));
         wl_output_add_listener(w->output, &output_listener, v);
     }
@@ -794,26 +795,26 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
                     ext_output_image_capture_source_manager_v1_interface.name)
              == 0)
     {
-        w->source_manager = wl_registry_bind(registry, name,
+        w->source_manager = (struct ext_output_image_capture_source_manager_v1 *)wl_registry_bind(registry, name,
                                              &ext_output_image_capture_source_manager_v1_interface, 1);
     }
     else if (strcmp(interface,
                     ext_image_copy_capture_manager_v1_interface.name) == 0)
     {
-        w->copy_manager = wl_registry_bind(registry, name,
+        w->copy_manager = (struct ext_image_copy_capture_manager_v1 *)wl_registry_bind(registry, name,
                                            &ext_image_copy_capture_manager_v1_interface, 1);
     }
     else if (strcmp(interface,
                     zwlr_virtual_pointer_manager_v1_interface.name) == 0)
     {
         w->pointer_manager_version = MIN(version, 2);
-        w->pointer_manager = wl_registry_bind(registry, name,
+        w->pointer_manager = (struct zwlr_virtual_pointer_manager_v1 *)wl_registry_bind(registry, name,
                                               &zwlr_virtual_pointer_manager_v1_interface,
                                               w->pointer_manager_version);
     }
     else if (strcmp(interface, zwlr_output_manager_v1_interface.name) == 0)
     {
-        w->output_manager = wl_registry_bind(registry, name,
+        w->output_manager = (struct zwlr_output_manager_v1 *)wl_registry_bind(registry, name,
                                              &zwlr_output_manager_v1_interface, 1);
         zwlr_output_manager_v1_add_listener(w->output_manager,
                                             &manager_listener, v);
@@ -821,7 +822,7 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
     else if (strcmp(interface,
                     zwp_virtual_keyboard_manager_v1_interface.name) == 0)
     {
-        w->keyboard_manager = wl_registry_bind(registry, name,
+        w->keyboard_manager = (struct zwp_virtual_keyboard_manager_v1 *)wl_registry_bind(registry, name,
                                                &zwp_virtual_keyboard_manager_v1_interface, 1);
     }
     else if (w->wlr_clip == NULL)
