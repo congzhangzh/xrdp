@@ -483,7 +483,8 @@ on_process(void *data)
         int stride;
 
         update_pointer(v, buf);
-        h = spa_buffer_find_meta_data(buf, SPA_META_Header, sizeof(*h));
+        h = (struct spa_meta_header *)
+            spa_buffer_find_meta_data(buf, SPA_META_Header, sizeof(*h));
         if ((h != NULL && (h->flags & SPA_META_HEADER_FLAG_CORRUPTED)) ||
                 d->data == NULL || d->chunk->size == 0 || v->pixels == NULL)
         {
@@ -621,8 +622,8 @@ alloc_pixels(struct wlup *v, int width, int height)
     {
         munmap(v->pixels, v->pixels_size);
     }
-    v->pixels = mmap(NULL, size, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    v->pixels = (char *)mmap(NULL, size, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (v->pixels == MAP_FAILED)
     {
         v->pixels = NULL;
@@ -677,7 +678,7 @@ on_param_changed(void *data, uint32_t id, const struct spa_pod *param)
     }
 
     /* Shared memory only (no dma-buf), plus damage regions and cursor */
-    params[0] = spa_pod_builder_add_object(&b,
+    params[0] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
                                            SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
                                            SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 2, 16),
                                            SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(1),
@@ -686,19 +687,19 @@ on_param_changed(void *data, uint32_t id, const struct spa_pod *param)
                                            SPA_PARAM_BUFFERS_dataType,
                                            SPA_POD_CHOICE_FLAGS_Int((1 << SPA_DATA_MemFd) |
                                                (1 << SPA_DATA_MemPtr)));
-    params[1] = spa_pod_builder_add_object(&b,
+    params[1] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
                                            SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
                                            SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Header),
                                            SPA_PARAM_META_size,
                                            SPA_POD_Int(sizeof(struct spa_meta_header)));
-    params[2] = spa_pod_builder_add_object(&b,
+    params[2] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
                                            SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
                                            SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoDamage),
                                            SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(
                                                    sizeof(struct spa_meta_region) * MAX_DAMAGE,
                                                    sizeof(struct spa_meta_region),
                                                    sizeof(struct spa_meta_region) * MAX_DAMAGE));
-    params[3] = spa_pod_builder_add_object(&b,
+    params[3] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
                                            SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
                                            SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Cursor),
                                            SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(
@@ -721,7 +722,7 @@ on_state_changed(void *data, enum pw_stream_state old,
 
 static const struct pw_stream_events stream_events =
 {
-    PW_VERSION_STREAM_EVENTS,
+    .version = PW_VERSION_STREAM_EVENTS,
     .state_changed = on_state_changed,
     .param_changed = on_param_changed,
     .process = on_process,
@@ -736,7 +737,7 @@ on_core_error(void *data, uint32_t id, int seq, int res, const char *message)
 
 static const struct pw_core_events core_events =
 {
-    PW_VERSION_CORE_EVENTS,
+    .version = PW_VERSION_CORE_EVENTS,
     .error = on_core_error,
 };
 
@@ -747,14 +748,16 @@ static const struct pw_core_events core_events =
 static const struct spa_pod *
 build_enum_format(struct spa_pod_builder *b, int width, int height)
 {
-    struct spa_rectangle size = SPA_RECTANGLE(width, height);
+    struct spa_rectangle size = SPA_RECTANGLE((uint32_t)width,
+                                              (uint32_t)height);
     struct spa_rectangle min_size = SPA_RECTANGLE(1, 1);
     struct spa_rectangle max_size = SPA_RECTANGLE(8192, 8192);
     struct spa_fraction rate = SPA_FRACTION(0, 1);
     struct spa_fraction max_rate = SPA_FRACTION(60, 1);
     struct spa_fraction min_rate = SPA_FRACTION(1, 1);
 
-    return spa_pod_builder_add_object(b,
+    /* (casts: the macro gives a void *, which C++ does not convert) */
+    return (const struct spa_pod *)spa_pod_builder_add_object(b,
                                       SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
                                       SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
                                       SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
@@ -820,8 +823,9 @@ connect_stream(struct wlup *v)
     params[0] = build_enum_format(&b, v->server_width, v->server_height);
 
     if (pw_stream_connect(m->stream, PW_DIRECTION_INPUT, m->node_id,
-                          PW_STREAM_FLAG_AUTOCONNECT |
-                          PW_STREAM_FLAG_MAP_BUFFERS,
+                          (enum pw_stream_flags)
+                          (PW_STREAM_FLAG_AUTOCONNECT |
+                           PW_STREAM_FLAG_MAP_BUFFERS),
                           params, 1) < 0)
     {
         LOG(LOG_LEVEL_ERROR, "wlup/mutter: pw_stream_connect failed");

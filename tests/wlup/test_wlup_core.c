@@ -20,6 +20,7 @@
 #endif
 
 #include <limits.h>
+#include <string.h>
 
 #include "os_calls.h"
 #include "scancode.h"
@@ -80,8 +81,9 @@ END_TEST
 /******************************************************************************/
 START_TEST(test_wants_frames)
 {
-    struct source_info si = { 0 };
+    struct source_info si;
 
+    memset(&si, 0, sizeof(si)); /* not { 0 }: its first member is an enum */
     ck_assert_int_eq(wlup_wants_frames(v), 1);
     v->suppress_output = 1;
     ck_assert_int_eq(wlup_wants_frames(v), 0);
@@ -221,9 +223,10 @@ END_TEST
  * xrdp has sent all of the last one, not while it still holds some */
 START_TEST(test_bitmap_ack_late)
 {
-    struct source_info si = { 0 };
+    struct source_info si;
     int timeout = -1;
 
+    memset(&si, 0, sizeof(si)); /* not { 0 }: its first member is an enum */
     wlup_begin_update(v);
     wlup_paint_region(v, 0, 0, 10, 10);
     wlup_end_update(v);

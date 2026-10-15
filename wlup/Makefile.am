@@ -51,6 +51,15 @@ EXTRA_DIST = $(PROTOCOLS:%=protocols/%.xml)
 %-protocol.c: $(srcdir)/protocols/%.xml
 	$(WAYLAND_SCANNER) private-code $< $@
 
+# wayland-scanner's code is C, and must stay C: in C++ (CC=g++, as xrdp's
+# CI builds), a const object at file scope has internal linkage, so the
+# interfaces would neither be exported nor link. -x c compiles it as C
+# whatever CC is; wlup's own code reaches it through the client headers,
+# which declare it extern "C"
+noinst_LTLIBRARIES = libwlup_protocols.la
+nodist_libwlup_protocols_la_SOURCES = $(PROTOCOL_C_FILES)
+libwlup_protocols_la_CFLAGS = -x c $(AM_CFLAGS)
+
 module_LTLIBRARIES = \
   libwlup.la
 
@@ -68,9 +77,10 @@ libwlup_la_SOURCES = \
 
 EXTRA_libwlup_la_SOURCES = backends/mutter/mutter.c backends/mutter/mutter.h
 
-nodist_libwlup_la_SOURCES = $(PROTOCOL_C_FILES) $(PROTOCOL_H_FILES)
+nodist_libwlup_la_SOURCES = $(PROTOCOL_H_FILES)
 
 libwlup_la_LIBADD = \
+  libwlup_protocols.la \
   $(top_builddir)/common/libcommon.la \
   $(WAYLAND_CLIENT_LIBS) \
   $(XKBCOMMON_LIBS) \
