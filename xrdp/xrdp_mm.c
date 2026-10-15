@@ -438,7 +438,9 @@ xrdp_mm_update_av1_444(struct xrdp_mm *self)
             (self->egfx_flags & XRDP_EGFX_AV1_444) == 0)
     {
         LOG(LOG_LEVEL_INFO, "AV1 in 4:4:4: frames come as yuv444");
-        self->egfx_flags |= XRDP_EGFX_AV1_444;
+        /* (a cast: the code is also built as C++) */
+        self->egfx_flags = (enum xrdp_egfx_flags)
+                           (self->egfx_flags | XRDP_EGFX_AV1_444);
         ci->capture_format = XRDP_yuv444_709fr;
     }
 }
@@ -1370,7 +1372,8 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
             /* The H.264 pipeline, with AV1 as the encoder */
             LOG(LOG_LEVEL_INFO, "Matched AV1 mode");
             best_index = best_av1_index;
-            self->egfx_flags = XRDP_EGFX_H264 | XRDP_EGFX_AV1;
+            self->egfx_flags = (enum xrdp_egfx_flags)
+                               (XRDP_EGFX_H264 | XRDP_EGFX_AV1);
             flags = ver_flags[best_index].flags;
             self->av1_444_allowed =
                 (flags & XR_RDPGFX_CAPS_FLAG_AV1_I444_SUPPORTED) != 0 &&
