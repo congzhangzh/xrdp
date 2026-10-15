@@ -398,7 +398,10 @@ enum xrdp_egfx_flags
     XRDP_EGFX_H264 = 1,
     XRDP_EGFX_RFX_PRO = 2,
     /* With XRDP_EGFX_H264: the same frames, encoded as AV1 */
-    XRDP_EGFX_AV1 = 4
+    XRDP_EGFX_AV1 = 4,
+    /* With XRDP_EGFX_AV1: frames come as XRDP_yuv444_709fr, encoded in
+     * 4:4:4 (AV1 profile 1). See xrdp_mm_update_av1_444() */
+    XRDP_EGFX_AV1_444 = 8
 };
 
 struct xrdp_mm
@@ -442,6 +445,7 @@ struct xrdp_mm
     struct xrdp_egfx *egfx;
     int egfx_up;
     enum xrdp_egfx_flags egfx_flags;
+    int av1_444_allowed; /* the client decodes AV1 in 4:4:4 */
     int gfx_delay_autologin;
     int mod_uses_wm_screen_for_gfx;
     /* Frames of the WM screen sent with GFX, and how many of them the

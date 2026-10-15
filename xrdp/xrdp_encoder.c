@@ -250,7 +250,11 @@ xrdp_encoder_create(struct xrdp_mm *mm)
             (mm->egfx_flags & XRDP_EGFX_AV1) != 0 ? "AV1" : "h264");
         self->in_codec_mode = 1;
         client_info->capture_code = CC_GFX_A2;
-        client_info->capture_format = XRDP_nv12_709fr;
+        /* A new encoder after a resize keeps 4:4:4: the module still
+         * sends what it was asked for when it got the client info */
+        client_info->capture_format =
+            (mm->egfx_flags & XRDP_EGFX_AV1_444) != 0 ?
+            XRDP_yuv444_709fr : XRDP_nv12_709fr;
         self->gfx = 1;
     }
 #endif
@@ -974,8 +978,12 @@ gfx_wiretosurface1(struct xrdp_encoder *self,
     }
     else
     {
-        /* assume NV12 format */
-        if (twidth * theight * 3 / 2 > enc_gfx_cmd->data_bytes)
+        /* NV12, or 4 bytes a pixel for yuv444 (AV1 in 4:4:4) */
+        int format = self->mm->wm->client_info->capture_format;
+        int frame_bytes = format == XRDP_yuv444_709fr ?
+                          twidth * theight * 4 : twidth * theight * 3 / 2;
+
+        if (frame_bytes > enc_gfx_cmd->data_bytes)
         {
             g_free(s->data);
             g_free(crects);
@@ -996,7 +1004,7 @@ gfx_wiretosurface1(struct xrdp_encoder *self,
         error = self->xrdp_encoder_h264_encode(
                     self->codec_handle_h264_gfx[mon_index], 0,
                     0, 0,
-                    width, height, twidth, theight, 0,
+                    width, height, twidth, theight, format,
                     enc_gfx_cmd->data,
                     crects, num_rects_c,
                     s->p, &bitmap_data_length,
