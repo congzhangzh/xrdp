@@ -679,34 +679,34 @@ on_param_changed(void *data, uint32_t id, const struct spa_pod *param)
 
     /* Shared memory only (no dma-buf), plus damage regions and cursor */
     params[0] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
-                                           SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
-                                           SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 2, 16),
-                                           SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(1),
-                                           SPA_PARAM_BUFFERS_size, SPA_POD_Int(stride * m->height),
-                                           SPA_PARAM_BUFFERS_stride, SPA_POD_Int(stride),
-                                           SPA_PARAM_BUFFERS_dataType,
-                                           SPA_POD_CHOICE_FLAGS_Int((1 << SPA_DATA_MemFd) |
-                                               (1 << SPA_DATA_MemPtr)));
+                SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
+                SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 2, 16),
+                SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(1),
+                SPA_PARAM_BUFFERS_size, SPA_POD_Int(stride * m->height),
+                SPA_PARAM_BUFFERS_stride, SPA_POD_Int(stride),
+                SPA_PARAM_BUFFERS_dataType,
+                SPA_POD_CHOICE_FLAGS_Int((1 << SPA_DATA_MemFd) |
+                                         (1 << SPA_DATA_MemPtr)));
     params[1] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
-                                           SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
-                                           SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Header),
-                                           SPA_PARAM_META_size,
-                                           SPA_POD_Int(sizeof(struct spa_meta_header)));
+                SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+                SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Header),
+                SPA_PARAM_META_size,
+                SPA_POD_Int(sizeof(struct spa_meta_header)));
     params[2] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
-                                           SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
-                                           SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoDamage),
-                                           SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(
-                                                   sizeof(struct spa_meta_region) * MAX_DAMAGE,
-                                                   sizeof(struct spa_meta_region),
-                                                   sizeof(struct spa_meta_region) * MAX_DAMAGE));
+                SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+                SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoDamage),
+                SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(
+                    sizeof(struct spa_meta_region) * MAX_DAMAGE,
+                    sizeof(struct spa_meta_region),
+                    sizeof(struct spa_meta_region) * MAX_DAMAGE));
     params[3] = (const struct spa_pod *)spa_pod_builder_add_object(&b,
-                                           SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
-                                           SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Cursor),
-                                           SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(
-                                                   CURSOR_META_SIZE(64, 64),
-                                                   CURSOR_META_SIZE(1, 1),
-                                                   CURSOR_META_SIZE(CURSOR_META_MAX,
-                                                       CURSOR_META_MAX)));
+                SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+                SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Cursor),
+                SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(
+                    CURSOR_META_SIZE(64, 64),
+                    CURSOR_META_SIZE(1, 1),
+                    CURSOR_META_SIZE(CURSOR_META_MAX,
+                                     CURSOR_META_MAX)));
     pw_stream_update_params(m->stream, params, 4);
 }
 
@@ -749,7 +749,7 @@ static const struct spa_pod *
 build_enum_format(struct spa_pod_builder *b, int width, int height)
 {
     struct spa_rectangle size = SPA_RECTANGLE((uint32_t)width,
-                                              (uint32_t)height);
+                                (uint32_t)height);
     struct spa_rectangle min_size = SPA_RECTANGLE(1, 1);
     struct spa_rectangle max_size = SPA_RECTANGLE(8192, 8192);
     struct spa_fraction rate = SPA_FRACTION(0, 1);
@@ -758,17 +758,17 @@ build_enum_format(struct spa_pod_builder *b, int width, int height)
 
     /* (casts: the macro gives a void *, which C++ does not convert) */
     return (const struct spa_pod *)spa_pod_builder_add_object(b,
-                                      SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
-                                      SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
-                                      SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-                                      SPA_FORMAT_VIDEO_format,
-                                      SPA_POD_CHOICE_ENUM_Id(3, SPA_VIDEO_FORMAT_BGRx,
-                                              SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_BGRA),
-                                      SPA_FORMAT_VIDEO_size,
-                                      SPA_POD_CHOICE_RANGE_Rectangle(&size, &min_size, &max_size),
-                                      SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate),
-                                      SPA_FORMAT_VIDEO_maxFramerate,
-                                      SPA_POD_CHOICE_RANGE_Fraction(&max_rate, &min_rate, &max_rate));
+            SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
+            SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
+            SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
+            SPA_FORMAT_VIDEO_format,
+            SPA_POD_CHOICE_ENUM_Id(3, SPA_VIDEO_FORMAT_BGRx,
+                                   SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_BGRA),
+            SPA_FORMAT_VIDEO_size,
+            SPA_POD_CHOICE_RANGE_Rectangle(&size, &min_size, &max_size),
+            SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate),
+            SPA_FORMAT_VIDEO_maxFramerate,
+            SPA_POD_CHOICE_RANGE_Fraction(&max_rate, &min_rate, &max_rate));
 }
 
 /******************************************************************************/
