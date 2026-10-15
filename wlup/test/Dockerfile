@@ -10,7 +10,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         sway foot grim fonts-dejavu-core xkb-data openssl procps \
         freerdp3-x11 xvfb xdotool imagemagick wev jq xclip \
         xserver-xorg-core xserver-xorg-video-dummy \
-        libfuse3-dev fuse3 sox iproute2 check libcmocka-dev \
+        libfuse3-dev fuse3 sox iproute2 check libcmocka-dev libaom-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 1000 tester
