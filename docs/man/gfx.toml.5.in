@@ -30,9 +30,15 @@ to be specified in this section are the following:
 
 .TP
 \fBorder\fR = \fI<array>\fR
-Define the order in which codecs should be used, "H.264" and "RFX".
+Define the order in which codecs should be used, "H.264", "RFX" and "AV1".
 Specify as an array of strings like \fB[ "H.264", "RFX ]\fR.
 Strings in the array are case-insensitive, while others are case-sensitive.
+
+"AV1" is FreeRDP's extension to the graphics pipeline, not part of
+MS-RDPEGFX: only FreeRDP clients built with it offer it (\fB/gfx:AV1\fR),
+and only an xrdp built with \fB--enable-av1\fR (libaom) uses it. Clients
+that do not offer it get the next codec in the order, so
+\fB[ "AV1", "H.264", "RFX" ]\fR is safe for every client.
 
 .TP
 \fBh264_encoder\fR = \fI<string>\fR

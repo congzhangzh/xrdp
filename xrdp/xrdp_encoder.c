@@ -42,6 +42,10 @@
 #include "xrdp_encoder_openh264.h"
 #endif
 
+#ifdef XRDP_AV1
+#include "xrdp_encoder_av1.h"
+#endif
+
 #define DEFAULT_XRDP_GFX_FRAMES_IN_FLIGHT 2
 /* limits used for validate env var XRDP_GFX_FRAMES_IN_FLIGHT */
 #define MIN_XRDP_GFX_FRAMES_IN_FLIGHT 1
@@ -140,6 +144,18 @@ static void
 set_h264_encoder_methods(struct xrdp_encoder *self)
 {
     const char *encoder_name = NULL;
+#if defined(XRDP_AV1)
+    if ((self->mm->egfx_flags & XRDP_EGFX_AV1) != 0)
+    {
+        /* The frames are the H.264 pipeline's, encoded as AV1 */
+        self->xrdp_encoder_h264_create = xrdp_encoder_av1_create;
+        self->xrdp_encoder_h264_delete = xrdp_encoder_av1_delete;
+        self->xrdp_encoder_h264_encode = xrdp_encoder_av1_encode;
+        LOG(LOG_LEVEL_INFO, "xrdp_encoder_create: using libaom for "
+            "software encoder (AV1)");
+        return;
+    }
+#endif
 #if defined(XRDP_X264) && defined(XRDP_OPENH264)
     struct xrdp_tconfig_gfx gfxconfig;
     tconfig_load_gfx(GFX_CONF, &gfxconfig);
@@ -225,16 +241,20 @@ xrdp_encoder_create(struct xrdp_mm *mm)
         client_info->capture_format = XRDP_a8b8g8r8;
         self->process_enc = process_enc_jpg;
     }
-#if defined(XRDP_X264) || defined(XRDP_OPENH264)
-    else if (mm->libh264_loaded && (mm->egfx_flags & XRDP_EGFX_H264) != 0)
+#if defined(XRDP_X264) || defined(XRDP_OPENH264) || defined(XRDP_AV1)
+    else if ((mm->egfx_flags & XRDP_EGFX_AV1) != 0 ||
+             (mm->libh264_loaded && (mm->egfx_flags & XRDP_EGFX_H264) != 0))
     {
         LOG(LOG_LEVEL_INFO,
-            "xrdp_encoder_create: starting h264 codec session gfx");
+            "xrdp_encoder_create: starting %s codec session gfx",
+            (mm->egfx_flags & XRDP_EGFX_AV1) != 0 ? "AV1" : "h264");
         self->in_codec_mode = 1;
         client_info->capture_code = CC_GFX_A2;
         client_info->capture_format = XRDP_nv12_709fr;
         self->gfx = 1;
     }
+#endif
+#if defined(XRDP_X264) || defined(XRDP_OPENH264)
     else if (mm->libh264_loaded && client_info->h264_codec_id != 0)
     {
         LOG(LOG_LEVEL_INFO, "xrdp_encoder_create: starting h264 codec session");
@@ -375,7 +395,8 @@ xrdp_encoder_create(struct xrdp_mm *mm)
 void
 xrdp_encoder_delete(struct xrdp_encoder *self)
 {
-#if defined(XRDP_RFXCODEC) || defined(XRDP_X264) || defined(XRDP_OPENH264)
+#if defined(XRDP_RFXCODEC) || defined(XRDP_X264) || \
+    defined(XRDP_OPENH264) || defined(XRDP_AV1)
     int index;
 #endif
 
@@ -411,7 +432,7 @@ xrdp_encoder_delete(struct xrdp_encoder *self)
     }
 #endif
 
-#if defined(XRDP_X264) || defined(XRDP_OPENH264)
+#if defined(XRDP_X264) || defined(XRDP_OPENH264) || defined(XRDP_AV1)
     for (index = 0; index < 16; index++)
     {
         if (self->codec_handle_h264_gfx[index] != NULL)
@@ -836,6 +857,12 @@ gfx_wiretosurface1(struct xrdp_encoder *self,
     }
     in_uint16_le(in_s, surface_id);
     in_uint16_le(in_s, codec_id);
+    if (codec_id == XR_RDPGFX_CODECID_AVC420 &&
+            (self->mm->egfx_flags & XRDP_EGFX_AV1) != 0)
+    {
+        /* Encoded as AV1 instead, with the same framing */
+        codec_id = XR_RDPGFX_CODECID_AV1;
+    }
     in_uint8(in_s, pixel_format);
     in_uint32_le(in_s, flags);
     mon_index = (flags >> 28) & 0xF;

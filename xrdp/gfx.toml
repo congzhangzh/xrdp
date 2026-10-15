@@ -1,4 +1,6 @@
 [codec]
+# "AV1" (FreeRDP's extension; xrdp built with --enable-av1) may be added
+# first, e.g. [ "AV1", "H.264", "RFX" ]: other clients get the next codec
 order = [ "H.264", "RFX" ]
 
 # Specify a preferred H.264 encoder, "x264" or "OpenH264".

@@ -396,7 +396,9 @@ enum xrdp_egfx_flags
 {
     XRDP_EGFX_NONE = 0,
     XRDP_EGFX_H264 = 1,
-    XRDP_EGFX_RFX_PRO = 2
+    XRDP_EGFX_RFX_PRO = 2,
+    /* With XRDP_EGFX_H264: the same frames, encoded as AV1 */
+    XRDP_EGFX_AV1 = 4
 };
 
 struct xrdp_mm
