@@ -149,6 +149,7 @@ struct wlup
 
     /* frames to the GFX H.264 encoder (wlup_gfx.c) */
     int gfx_h264;            /* else server_paint_rect() */
+    int gfx_yuv444;          /* frames as XRDP_yuv444_709fr, not NV12 */
     /* xrdp's, for the client's monitors at the time of each frame */
     const struct xrdp_client_info *client_info;
     int gfx_frame_id;        /* last frame sent */

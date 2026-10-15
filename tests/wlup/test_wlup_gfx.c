@@ -38,7 +38,8 @@ static struct kept_frame
     char cmd[512];
     int cmd_bytes;
     uint8_t data[4096];
-    int data_bytes;
+    int data_bytes;      /* kept: at most sizeof(data) */
+    int full_bytes;      /* sent */
 } kept[MAX_KEPT];
 
 /******************************************************************************/
@@ -54,6 +55,7 @@ egfx_cmd(struct wlup *w, char *cmd, int cmd_bytes, char *data, int data_bytes)
         memcpy(k->cmd, cmd, k->cmd_bytes);
         k->data_bytes = MIN(data_bytes, (int)sizeof(k->data));
         memcpy(k->data, data, k->data_bytes);
+        k->full_bytes = data_bytes;
     }
     frames_sent++;
     munmap(data, data_bytes);
@@ -356,6 +358,35 @@ START_TEST(test_damage_between_monitors)
 END_TEST
 
 /******************************************************************************/
+/* AV1 in 4:4:4: xrdp asks for yuv444, a 32-bit pixel each,
+ * 0xff << 24 | V << 16 | U << 8 | Y, with a U and V for every pixel */
+START_TEST(test_yuv444_frame)
+{
+    uint32_t *px = (uint32_t *)v->pixels;
+    const uint8_t *p;
+
+    v->gfx_yuv444 = 1;
+    px[5 * 64 + 5] = 0xff0000; /* red at 5,5; its neighbour 6,5 black */
+    wlup_gfx_add_damage(v, 0, 0, 16, 16);
+    ck_assert_int_eq(wlup_gfx_poll(v), 0);
+    ck_assert_int_eq(frames_sent, 1);
+    ck_assert_int_eq(kept[0].full_bytes, 64 * 48 * 4);
+
+    /* BT.709 full range, as for NV12: red is Y 53, U 99, V 255 */
+    p = kept[0].data + (5 * 64 + 5) * 4;
+    ck_assert_int_eq(p[0], 53);
+    ck_assert_int_eq(p[1], 99);
+    ck_assert_int_eq(p[2], 255);
+    ck_assert_int_eq(p[3], 255);
+    /* the black neighbour keeps its own colour: Y 0, U and V 128 */
+    p = kept[0].data + (5 * 64 + 6) * 4;
+    ck_assert_int_eq(p[0], 0);
+    ck_assert_int_eq(p[1], 128);
+    ck_assert_int_eq(p[2], 128);
+}
+END_TEST
+
+/******************************************************************************/
 Suite *
 make_suite_wlup_gfx(void)
 {
@@ -375,6 +406,7 @@ make_suite_wlup_gfx(void)
     tcase_add_test(tc, test_monitors_wait_for_last_ack);
     tcase_add_test(tc, test_only_damaged_monitor);
     tcase_add_test(tc, test_damage_between_monitors);
+    tcase_add_test(tc, test_yuv444_frame);
     suite_add_tcase(s, tc);
     return s;
 }

@@ -24,7 +24,8 @@
  *     stream per surface. Each monitor with damage gets a frame of its
  *     own, with the monitor's index as the surface id and in the top 4
  *     bits of the WIRETOSURFACE_1 flags, and its damage relative to it
- *   - a monitor's damage is converted to NV12 (BT.709, full range) in a
+ *   - a monitor's damage is converted to NV12 (BT.709, full range), or
+ *     to yuv444 when xrdp asks for it (AV1 in 4:4:4), in a
  *     new anonymous mapping the size of the monitor. Only the damaged
  *     rectangles, widened to even coordinates, are filled in: the
  *     encoder copies just those into its own picture
@@ -65,13 +66,17 @@ wlup_gfx_init(struct wlup *v, const struct xrdp_client_info *ci)
 {
     /* A GFX surface per client monitor, each cut from the one output */
     v->gfx_h264 = ci->capture_code == CC_GFX_A2 &&
-                  ci->capture_format == XRDP_nv12_709fr;
+                  (ci->capture_format == XRDP_nv12_709fr ||
+                   ci->capture_format == XRDP_yuv444_709fr);
+    /* AV1 in 4:4:4: xrdp asks for full colour resolution */
+    v->gfx_yuv444 = ci->capture_format == XRDP_yuv444_709fr;
     v->gfx_frame_id = 0;
     v->gfx_frame_acked = 0;
     v->gfx_num_damage = 0;
     v->gfx_damage_overflow = 0;
     LOG(LOG_LEVEL_INFO, "wlup: frames go to %s",
-        v->gfx_h264 ? "the GFX H.264 encoder" : "server_paint_rect()");
+        !v->gfx_h264 ? "server_paint_rect()" : v->gfx_yuv444 ?
+        "the GFX encoder, as yuv444" : "the GFX H.264 encoder");
 }
 
 /******************************************************************************/
@@ -213,6 +218,39 @@ xrgb_to_nv12_709fr(const uint8_t *src, int src_stride,
 }
 
 /******************************************************************************/
+/* Converts a rectangle from 32-bit xRGB to XRDP_yuv444_709fr: a 32-bit
+ * pixel each, 0xff << 24 | V << 16 | U << 8 | Y, as xrdp_accel_assist's
+ * shader writes it. BT.709 full range, as xrgb_to_nv12_709fr(), but with
+ * a U and a V for every pixel */
+static void
+xrgb_to_yuv444_709fr(const uint8_t *src, int src_stride,
+                     uint8_t *dst, int dst_stride,
+                     int x1, int y1, int x2, int y2)
+{
+    int x;
+    int y;
+
+    for (y = y1; y < y2; ++y)
+    {
+        const uint32_t *s = (const uint32_t *)(src + (size_t)y * src_stride);
+        uint32_t *d = (uint32_t *)(dst + (size_t)y * dst_stride);
+
+        for (x = x1; x < x2; ++x)
+        {
+            int r = (s[x] >> 16) & 0xff;
+            int g = (s[x] >> 8) & 0xff;
+            int b = s[x] & 0xff;
+            int yy = (54 * r + 183 * g + 18 * b) >> 8;
+            int u = ((-29 * r - 99 * g + 128 * b) >> 8) + 128;
+            int vv = ((128 * r - 116 * g - 12 * b) >> 8) + 128;
+
+            d[x] = 0xff000000u | (uint32_t)MIN(MAX(vv, 0), 255) << 16 |
+                   (uint32_t)MIN(MAX(u, 0), 255) << 8 | (uint32_t)yy;
+        }
+    }
+}
+
+/******************************************************************************/
 /* One GFX surface: a client monitor, at x, y in the desktop */
 struct gfx_monitor
 {
@@ -340,8 +378,10 @@ send_monitor_frame(struct wlup *v, const struct gfx_monitor *m, int *sent)
         return 0;
     }
 
-    /* NV12 of the whole monitor; untouched pages are never allocated */
-    data_bytes = m->width * m->height + m->width * ((m->height + 1) / 2);
+    /* NV12 (or yuv444) of the whole monitor; untouched pages are never
+     * allocated */
+    data_bytes = v->gfx_yuv444 ? m->width * m->height * 4 :
+                 m->width * m->height + m->width * ((m->height + 1) / 2);
     data = (uint8_t *)mmap(NULL, data_bytes, PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (data == MAP_FAILED)
@@ -354,11 +394,21 @@ send_monitor_frame(struct wlup *v, const struct gfx_monitor *m, int *sent)
     src += ((size_t)m->y * v->buffer_width + m->x) * 4;
     for (i = 0; i < num_c; ++i)
     {
-        xrgb_to_nv12_709fr(src, v->buffer_width * 4,
-                           data, data + (size_t)m->width * m->height,
-                           m->width,
-                           copy_rects[i * 4], copy_rects[i * 4 + 1],
-                           copy_rects[i * 4 + 2], copy_rects[i * 4 + 3]);
+        if (v->gfx_yuv444)
+        {
+            xrgb_to_yuv444_709fr(src, v->buffer_width * 4,
+                                 data, m->width * 4,
+                                 copy_rects[i * 4], copy_rects[i * 4 + 1],
+                                 copy_rects[i * 4 + 2], copy_rects[i * 4 + 3]);
+        }
+        else
+        {
+            xrgb_to_nv12_709fr(src, v->buffer_width * 4,
+                               data, data + (size_t)m->width * m->height,
+                               m->width,
+                               copy_rects[i * 4], copy_rects[i * 4 + 1],
+                               copy_rects[i * 4 + 2], copy_rects[i * 4 + 3]);
+        }
     }
 
     start_bytes = 8 + 8;
