@@ -277,6 +277,18 @@ if [ -x "$XFREERDP_AV1" ] && grep -q "av1 (libaom) *yes" "$OUT/configure.log"; t
     AV1_FALLBACK_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
     kill $CLIENT 2>/dev/null || true
     sleep 3
+    # The AV1 build with AV1 off: H.264, with its OpenH264. (It offers AV1
+    # by default, even with /gfx:AVC420: FreeRDP_GfxCodecAV1 is on)
+    log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
+    "$XFREERDP_AV1" /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+        /size:1600x900 /bpp:32 /gfx:AVC420,AV1:off -grab-keyboard \
+        > "$OUT/client-av1-build-h264.log" 2>&1 &
+    CLIENT=$!
+    sleep 8
+    import -window root "$OUT/client-av1-build-h264.png"
+    AV1_BUILD_H264_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
+    kill $CLIENT 2>/dev/null || true
+    sleep 3
     # i420: 4:2:0, as the H.264 pipeline's NV12
     log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
     "$XFREERDP_AV1" /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
@@ -391,6 +403,10 @@ if [ "$AV1_RAN" = 1 ]; then
     check "av1: with AV1 first, a client without it still gets H.264" \
         'echo "$AV1_FALLBACK_LOG" | grep -q "Matched H264 mode" &&
          echo "$AV1_FALLBACK_LOG" | grep -q "starting h264 codec session gfx"'
+    check "av1: the AV1 build with AV1 off gets H.264 and draws it" \
+        'echo "$AV1_BUILD_H264_LOG" | grep -q "Matched H264 mode" &&
+         ! echo "$AV1_BUILD_H264_LOG" | grep -q "Matched AV1 mode" &&
+         [ "$(convert "$OUT/client-av1-build-h264.png" -format %k info:)" -gt 50 ]'
     check "av1: i420 gets AV1 in 4:2:0" \
         'echo "$AV1_I420_LOG" | grep -q "Matched AV1 mode" &&
          echo "$AV1_I420_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0)" &&
