@@ -56,7 +56,8 @@ struct xrdp_tconfig_gfx_openh264_param
 enum xrdp_tconfig_codecs
 {
     XTC_H264,
-    XTC_RFX
+    XTC_RFX,
+    XTC_AV1
 };
 
 enum xrdp_tconfig_h264_encoders
@@ -67,7 +68,7 @@ enum xrdp_tconfig_h264_encoders
 
 struct xrdp_tconfig_gfx_codec_order
 {
-    enum xrdp_tconfig_codecs codecs[2];
+    enum xrdp_tconfig_codecs codecs[3];
     unsigned short codec_count;
 };
 

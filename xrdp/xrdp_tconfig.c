@@ -86,6 +86,12 @@ tconfig_codec_order_to_str(
                     buff[p++] = 'X';
                     break;
 
+                case XTC_AV1:
+                    buff[p++] = 'A';
+                    buff[p++] = 'V';
+                    buff[p++] = '1';
+                    break;
+
                 default:
                     buff[p++] = '?';
                     buff[p++] = '?';
@@ -424,6 +430,7 @@ static int tconfig_load_gfx_order(toml_table_t *tfile, struct xrdp_tconfig_gfx *
 
     int h264_found = 0;
     int rfx_found = 0;
+    int av1_found = 0;
 
     config->codec.codec_count = 0;
 
@@ -454,6 +461,13 @@ static int tconfig_load_gfx_order(toml_table_t *tfile, struct xrdp_tconfig_gfx *
                     config->codec.codecs[config->codec.codec_count] = XTC_RFX;
                     ++config->codec.codec_count;
                 }
+                if (av1_found == 0 &&
+                        g_strcasecmp(datum.u.s, "av1") == 0)
+                {
+                    av1_found = 1;
+                    config->codec.codecs[config->codec.codec_count] = XTC_AV1;
+                    ++config->codec.codec_count;
+                }
                 free(datum.u.s);
             }
             else
@@ -463,7 +477,7 @@ static int tconfig_load_gfx_order(toml_table_t *tfile, struct xrdp_tconfig_gfx *
         }
     }
 
-    if (h264_found == 0 && rfx_found == 0)
+    if (config->codec.codec_count == 0)
     {
         /* prefer H264 if no priority found */
         config->codec.codecs[0] = XTC_H264;

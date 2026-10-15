@@ -1245,6 +1245,9 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
     int index;
     int best_h264_index;
     int best_pro_index;
+#if defined(XRDP_AV1)
+    int best_av1_index;
+#endif
     int error;
     int version;
     int flags;
@@ -1276,6 +1279,9 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
     g_qsort(ver_flags, caps_count, sizeof(struct ver_flags_t), cmpverfunc);
     best_h264_index = -1;
     best_pro_index = -1;
+#if defined(XRDP_AV1)
+    best_av1_index = -1;
+#endif
     for (index = 0; index < caps_count; index++)
     {
         version = ver_flags[index].version;
@@ -1314,6 +1320,13 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
                 }
                 best_pro_index = index;
                 break;
+#if defined(XRDP_AV1)
+            case XR_RDPGFX_CAPVERSION_FRDP_1:
+                /* FreeRDP's AV1 extension, chosen only for AV1: for the
+                 * other codecs, a Microsoft version is preferred */
+                best_av1_index = index;
+                break;
+#endif
             default:
                 /* just skip unknwown */
                 LOG(LOG_LEVEL_INFO, "unknown version 0x%8.8x", version);
@@ -1329,6 +1342,16 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
         tconfig_codec_order_to_str(co, cobuff, sizeof(cobuff)));
     for (index = 0 ; index < co->codec_count ; ++index)
     {
+#if defined(XRDP_AV1)
+        if (co->codecs[index] == XTC_AV1 && best_av1_index >= 0)
+        {
+            /* The H.264 pipeline, with AV1 as the encoder */
+            LOG(LOG_LEVEL_INFO, "Matched AV1 mode");
+            best_index = best_av1_index;
+            self->egfx_flags = XRDP_EGFX_H264 | XRDP_EGFX_AV1;
+            break;
+        }
+#endif
 #if defined(XRDP_H264)
         if (co->codecs[index] == XTC_H264 && best_h264_index >= 0)
         {

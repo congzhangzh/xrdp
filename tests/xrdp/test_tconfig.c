@@ -115,6 +115,18 @@ START_TEST(test_tconfig_gfx_codec_order)
     ck_assert_int_eq(gfxconfig.codec.codec_count, 1);
     ck_assert_int_eq(gfxconfig.codec.codecs[0], XTC_RFX);
 
+    /* AV1, FreeRDP's extension, first */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_av1_preferred.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.codec.codec_count, 3);
+    ck_assert_int_eq(gfxconfig.codec.codecs[0], XTC_AV1);
+    ck_assert_int_eq(gfxconfig.codec.codecs[1], XTC_H264);
+    ck_assert_int_eq(gfxconfig.codec.codecs[2], XTC_RFX);
+
+    /* AV1 alone is kept, not replaced by the default order */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_av1_only.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.codec.codec_count, 1);
+    ck_assert_int_eq(gfxconfig.codec.codecs[0], XTC_AV1);
+
     /* H264 is preferred if order undefined */
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_order_undefined.toml", &gfxconfig);
     ck_assert_int_eq(gfxconfig.codec.codec_count, 2);

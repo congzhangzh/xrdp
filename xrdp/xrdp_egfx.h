@@ -41,6 +41,10 @@
 #define XR_RDPGFX_CAPVERSION_105    0x000A0502
 #define XR_RDPGFX_CAPVERSION_106    0x000A0600
 #define XR_RDPGFX_CAPVERSION_107    0x000A0701
+/* FreeRDP's extension, not in MS-RDPEGFX: like version 10, plus the AV1
+ * codec (XR_RDPGFX_CODECID_AV1). See FreeRDP's
+ * include/freerdp/channels/rdpgfx.h */
+#define XR_RDPGFX_CAPVERSION_FRDP_1 0x00010000
 
 #define XR_PIXEL_FORMAT_XRGB_8888   0x20
 #define XR_PIXEL_FORMAT_ARGB_8888   0x21
@@ -50,6 +54,10 @@
 #define XR_RDPGFX_CAPS_FLAG_AVC420_ENABLED  0x00000010
 #define XR_RDPGFX_CAPS_FLAG_AVC_DISABLED    0x00000020
 #define XR_RDPGFX_CAPS_FLAG_AVC_THINCLIENT  0x00000040
+/* FreeRDP's extension, with XR_RDPGFX_CAPVERSION_FRDP_1 only: the client
+ * can decode AV1 in 4:4:4 (profile 1), unless it also sets _DISABLED */
+#define XR_RDPGFX_CAPS_FLAG_AV1_I444_SUPPORTED  0x10000000
+#define XR_RDPGFX_CAPS_FLAG_AV1_I444_DISABLED   0x20000000
 
 #define XR_RDPGFX_CMDID_WIRETOSURFACE_1             0x0001
 #define XR_RDPGFX_CMDID_WIRETOSURFACE_2             0x0002
@@ -106,6 +114,9 @@
 /* The bitmap data encapsulated in the bitmapData field is compressed using
    the MPEG-4 AVC/H.264 Codec in YUV444v2 mode (section 2.2.4.6). */
 #define XR_RDPGFX_CODECID_AVC444V2          0x000F
+/* FreeRDP's extension, with XR_RDPGFX_CAPVERSION_FRDP_1 only: an AV1
+ * bitstream after an RFX_AVC420_METABLOCK, framed as for AVC420 */
+#define XR_RDPGFX_CODECID_AV1               0x0001
 
 struct xrdp_egfx_rect
 {
