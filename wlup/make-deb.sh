@@ -54,8 +54,10 @@ fi
 echo "== configure ($VERSION)"
 (cd "$SRC" && ./bootstrap > "$BUILD/bootstrap.log" 2>&1)
 # -Wno-error=nonnull: GCC 16 warns about xrdp/xrdp_mm.c, outside wlup
+# AV1 (FreeRDP's GFX extension) when libaom is there
+AV1_OPT=$(pkg-config --exists aom && echo --enable-av1 || true)
 "$SRC/configure" --enable-wlup --enable-wlup-mutter --enable-fuse --enable-pixman \
-    --enable-opus --enable-jpeg --enable-ipv6 --enable-x264 \
+    --enable-opus --enable-jpeg --enable-ipv6 --enable-x264 $AV1_OPT \
     --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
     CC="$CC" CFLAGS="-O2 -g -Wno-error=nonnull" > configure.log 2>&1
 
@@ -98,6 +100,12 @@ awk -v f="$GNOME_INI" '
 rm -f "$GNOME_INI"
 mv "$ETC/xrdp.ini.new" "$ETC/xrdp.ini"
 sed -i 's/^autorun=.*/autorun=GNOME/' "$ETC/xrdp.ini"
+
+# With AV1 built in, offer it first: FreeRDP clients built with AV1 get
+# it, every other client the next codec (H.264)
+if [ -n "$AV1_OPT" ]; then
+    sed -i 's/^order = .*/order = [ "AV1", "H.264", "RFX" ]/' "$ETC/gfx.toml"
+fi
 
 echo "== control files"
 mkdir -p "$ROOT/DEBIAN"
