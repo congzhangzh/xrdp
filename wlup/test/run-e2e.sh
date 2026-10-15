@@ -37,7 +37,9 @@ cp -a "$SRC" /build
 cd /build
 ./bootstrap > "$OUT/bootstrap.log" 2>&1
 # -Wno-error=nonnull: GCC 16 flags existing code in xrdp/xrdp_mm.c
-./configure --enable-wlup --enable-fuse --enable-x264 --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+# AV1 (FreeRDP's GFX extension) when libaom is there
+AV1_OPT=$(pkg-config --exists aom && echo --enable-av1)
+./configure --enable-wlup --enable-fuse --enable-x264 $AV1_OPT --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
     CFLAGS="-O2 -g -Wno-error=nonnull" > "$OUT/configure.log" 2>&1
 make -j"$(nproc)" > "$OUT/make.log" 2>&1
 make install > "$OUT/install.log" 2>&1
@@ -252,6 +254,57 @@ FOOT_FOCUS_R=$(title_at 1500)
 DISPLAY=:98 import -window root "$OUT/client-9-2mon-foot.png"
 echo "title bars, wev focused: $WEV_FOCUS_L $WEV_FOCUS_R;" \
      "foot focused: $FOOT_FOCUS_L $FOOT_FOCUS_R"
+
+# --- AV1, FreeRDP's GFX extension: with "AV1" first in the codec order, a
+# client that offers it gets the H.264 pipeline's frames encoded as AV1,
+# and a client that doesn't still gets H.264. Needs xrdp built with libaom
+# and a FreeRDP built with WITH_GFX_AV1 (wlup/test/freerdp-av1) ------------
+XFREERDP_AV1=${XFREERDP_AV1:-/opt/freerdp-av1/bin/xfreerdp}
+AV1_RAN=0
+if [ -x "$XFREERDP_AV1" ] && grep -q "av1 (libaom) *yes" "$OUT/configure.log"; then
+    AV1_RAN=1
+    kill $CLIENT 2>/dev/null || true
+    sleep 3
+    sed -i 's/^order = .*/order = [ "AV1", "H.264", "RFX" ]/' /etc/xrdp/gfx.toml
+    # Debian's client has no AV1: H.264 as before
+    log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
+    ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+        /size:1600x900 /bpp:32 /gfx:AVC420 -grab-keyboard \
+        > "$OUT/client-av1-fallback.log" 2>&1 &
+    CLIENT=$!
+    sleep 8
+    AV1_FALLBACK_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
+    kill $CLIENT 2>/dev/null || true
+    sleep 3
+    log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
+    "$XFREERDP_AV1" /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+        /size:1600x900 /bpp:32 /gfx:AV1:i420 -grab-keyboard \
+        > "$OUT/client-av1.log" 2>&1 &
+    CLIENT=$!
+    sleep 8
+    import -window root "$OUT/client-10-av1.png"
+    av1_title_at() {
+        import -window root -crop "1x1+$1+8" -depth 8 txt:- 2> /dev/null |
+            grep -o '#[0-9A-F]\{6\}' | head -1
+    }
+    read -r FOOT_X FOOT_Y < <(centre foot)
+    read -r WEV_X WEV_Y < <(centre wev)
+    xdotool mousemove "$FOOT_X" "$FOOT_Y" click 1
+    sleep 0.5
+    xdotool type --delay 80 'echo av1-$((6*7)) > /tmp/typed5.txt'
+    xdotool key Return
+    sleep 2
+    AV1_FOOT_L=$(av1_title_at 700)
+    AV1_FOOT_R=$(av1_title_at 1500)
+    xdotool mousemove "$WEV_X" "$WEV_Y" click 1
+    sleep 2
+    AV1_WEV_L=$(av1_title_at 700)
+    AV1_WEV_R=$(av1_title_at 1500)
+    import -window root "$OUT/client-11-av1-wev.png"
+    AV1_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
+    echo "AV1 title bars, foot focused: $AV1_FOOT_L $AV1_FOOT_R;" \
+         "wev focused: $AV1_WEV_L $AV1_WEV_R"
+fi
 # focused <#RRGGBB>: near sway's focused title bar colour. H.264 is
 # lossy, so the client shows e.g. #275475 for #285577
 focused() {
@@ -322,6 +375,28 @@ check "h264 two monitors: right monitor shows wev focused" \
     'focused "$WEV_FOCUS_R" && ! focused "$WEV_FOCUS_L"'
 check "h264 two monitors: left monitor shows foot focused" \
     'focused "$FOOT_FOCUS_L" && ! focused "$FOOT_FOCUS_R"'
+if [ "$AV1_RAN" = 1 ]; then
+    check "av1: with AV1 first, a client without it still gets H.264" \
+        'echo "$AV1_FALLBACK_LOG" | grep -q "Matched H264 mode" &&
+         echo "$AV1_FALLBACK_LOG" | grep -q "starting h264 codec session gfx"'
+    check "av1: the AV1 client gets AV1" \
+        'echo "$AV1_LOG" | grep -q "Matched AV1 mode" &&
+         echo "$AV1_LOG" | grep -q "starting AV1 codec session gfx" &&
+         echo "$AV1_LOG" | grep -q "xrdp_encoder_av1: encoder for 1600x900"'
+    check "av1: no frame dropped by the encoder" \
+        '! echo "$AV1_LOG" | grep -q "dropped"'
+    check "av1: the client decodes without errors" \
+        '! grep -E "\[ERROR\].*(rdpgfx|codec|gdi)" "$OUT/client-av1.log"'
+    check "av1: client shows more than a flat screen" \
+        '[ "$(convert "$OUT/client-10-av1.png" -format %k info:)" -gt 50 ]'
+    check "av1: input works" \
+        '[ "$(cat /tmp/typed5.txt 2>/dev/null)" = av1-42 ]'
+    check "av1: a focus change shows on the client" \
+        'focused "$AV1_FOOT_L" && ! focused "$AV1_FOOT_R" &&
+         focused "$AV1_WEV_R" && ! focused "$AV1_WEV_L"'
+else
+    echo "SKIP  av1: no AV1 client ($XFREERDP_AV1) or xrdp without libaom"
+fi
 
 # With systemd as PID 1 (wlup/test/systemd), sesman's PAM login goes
 # through pam_systemd: the session must be a real logind session

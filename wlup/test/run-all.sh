@@ -3,7 +3,8 @@
 # parallel, each in its own container:
 #
 #   sway-no-systemd  sway in a plain container (no init system, no
-#                    logind, no PipeWire), with /dev/fuse for the drive test
+#                    logind, no PipeWire), with /dev/fuse for the drive test;
+#                    its image also has a FreeRDP with AV1, for the AV1 tests
 #   sway-systemd     sway with systemd as PID 1: real PAM -> logind
 #                    session, microphone
 #   gnome-systemd    headless GNOME through the Mutter backend, with
@@ -32,6 +33,7 @@ TAG=wlup-test-$$
 # --- images (each one is built on the previous) -------------------------------
 if [ $BUILD = 1 ]; then
     for img in "xrdp-wlup-dev $TEST_DIR" \
+               "xrdp-wlup-freerdp-av1 $TEST_DIR/freerdp-av1" \
                "xrdp-wlup-systemd $TEST_DIR/systemd" \
                "xrdp-wlup-gnome $TEST_DIR/gnome" \
                "xrdp-wlup-mutter $TEST_DIR/mutter"; do
@@ -67,7 +69,7 @@ echo "running the suites in parallel, output in $OUT"
 
 docker run --rm --device /dev/fuse --cap-add SYS_ADMIN \
     --security-opt apparmor:unconfined \
-    -v "$SRC":/src:ro -v "$OUT/sway-no-systemd":/out xrdp-wlup-dev \
+    -v "$SRC":/src:ro -v "$OUT/sway-no-systemd":/out xrdp-wlup-freerdp-av1 \
     bash -c 'bash /src/wlup/test/run-e2e.sh /src /out > /out/run.log 2>&1;
              chmod -R a+r /out' &
 run_systemd sway-systemd xrdp-wlup-systemd /src/wlup/test/run-e2e.sh &
