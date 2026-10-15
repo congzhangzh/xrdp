@@ -257,7 +257,8 @@ echo "title bars, wev focused: $WEV_FOCUS_L $WEV_FOCUS_R;" \
 
 # --- AV1, FreeRDP's GFX extension: with "AV1" first in the codec order, a
 # client that offers it gets the H.264 pipeline's frames encoded as AV1,
-# and a client that doesn't still gets H.264. Needs xrdp built with libaom
+# and a client that doesn't still gets H.264. i420 is 4:2:0; with i444,
+# wlup sends the colours at full resolution and AV1 encodes 4:4:4. Needs xrdp built with libaom
 # and a FreeRDP built with WITH_GFX_AV1 (wlup/test/freerdp-av1) ------------
 XFREERDP_AV1=${XFREERDP_AV1:-/opt/freerdp-av1/bin/xfreerdp}
 AV1_RAN=0
@@ -276,9 +277,20 @@ if [ -x "$XFREERDP_AV1" ] && grep -q "av1 (libaom) *yes" "$OUT/configure.log"; t
     AV1_FALLBACK_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
     kill $CLIENT 2>/dev/null || true
     sleep 3
+    # i420: 4:2:0, as the H.264 pipeline's NV12
     log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
     "$XFREERDP_AV1" /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
         /size:1600x900 /bpp:32 /gfx:AV1:i420 -grab-keyboard \
+        > "$OUT/client-av1-i420.log" 2>&1 &
+    CLIENT=$!
+    sleep 8
+    AV1_I420_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
+    kill $CLIENT 2>/dev/null || true
+    sleep 3
+    # i444: wlup sends the colours at full resolution, AV1 profile 1
+    log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
+    "$XFREERDP_AV1" /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+        /size:1600x900 /bpp:32 /gfx:AV1:i444 -grab-keyboard \
         > "$OUT/client-av1.log" 2>&1 &
     CLIENT=$!
     sleep 8
@@ -379,10 +391,18 @@ if [ "$AV1_RAN" = 1 ]; then
     check "av1: with AV1 first, a client without it still gets H.264" \
         'echo "$AV1_FALLBACK_LOG" | grep -q "Matched H264 mode" &&
          echo "$AV1_FALLBACK_LOG" | grep -q "starting h264 codec session gfx"'
+    check "av1: i420 gets AV1 in 4:2:0" \
+        'echo "$AV1_I420_LOG" | grep -q "Matched AV1 mode" &&
+         echo "$AV1_I420_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0)" &&
+         ! echo "$AV1_I420_LOG" | grep -q "AV1 in 4:4:4"'
     check "av1: the AV1 client gets AV1" \
         'echo "$AV1_LOG" | grep -q "Matched AV1 mode" &&
          echo "$AV1_LOG" | grep -q "starting AV1 codec session gfx" &&
          echo "$AV1_LOG" | grep -q "xrdp_encoder_av1: encoder for 1600x900"'
+    check "av1: i444 gets 4:4:4 from wlup to the encoder" \
+        'echo "$AV1_LOG" | grep -q "AV1 in 4:4:4: frames come as yuv444" &&
+         echo "$AV1_LOG" | grep -q "wlup: frames go to the GFX encoder, as yuv444" &&
+         echo "$AV1_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:4:4)"'
     check "av1: no frame dropped by the encoder" \
         '! echo "$AV1_LOG" | grep -q "dropped"'
     check "av1: the client decodes without errors" \
