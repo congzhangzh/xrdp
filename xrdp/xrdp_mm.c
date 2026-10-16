@@ -4204,7 +4204,8 @@ xrdp_mm_frame_ack(struct xrdp_mm *self, int frame_id)
     }
     if ((encoder = self->encoder) == NULL)
     {
-        /* No encoder - Possibly a late frame ack with a resize in progress */
+        /* No encoder: a module's frame (see server_frame_marker()), or
+         * a late frame ack with a resize in progress */
         LOG_DEVEL(LOG_LEVEL_INFO, "xrdp_mm_frame_ack: "
                   "Frame ack incoming %d with no encoder!", frame_id);
     }
@@ -4681,6 +4682,28 @@ server_set_pointer_position(struct xrdp_mod *mod, int x, int y)
     wm = (struct xrdp_wm *)(mod->wm);
     xrdp_wm_send_pointer_position(wm, x, y);
     return 0;
+}
+
+/*****************************************************************************/
+/* Marks the start (action 0) or the end (action 1) of a frame of the
+ * module's output. The client acknowledges each frame it has received,
+ * and xrdp passes the ack on with mod_frame_ack(). Only for output that
+ * goes to the client as orders and bitmaps: not with GFX or an encoder,
+ * whose frames are acknowledged their own way. return error, also when
+ * the client does not acknowledge frames */
+static int
+server_frame_marker(struct xrdp_mod *mod, int action, int frame_id)
+{
+    struct xrdp_wm *wm;
+
+    wm = (struct xrdp_wm *)(mod->wm);
+    if (wm->client_info->gfx || wm->mm->encoder != NULL ||
+            !wm->client_info->use_frame_acks ||
+            (wm->client_info->use_fast_path & 1) == 0)
+    {
+        return 1;
+    }
+    return libxrdp_fastpath_send_frame_marker(wm->session, action, frame_id);
 }
 
 /*****************************************************************************/
@@ -5564,6 +5587,7 @@ xrdp_mm_setup_mod1(struct xrdp_mm *self)
             self->mod->server_paint_rects_ex = server_paint_rects_ex;
             self->mod->server_set_pointer_system = server_set_pointer_system;
             self->mod->server_set_pointer_position = server_set_pointer_position;
+            self->mod->server_frame_marker = server_frame_marker;
             self->mod->si = &(self->wm->session->si);
         }
     }
