@@ -201,7 +201,8 @@ struct xrdp_mod
                            char *data, int data_bytes);
     int (*server_set_pointer_system)(struct xrdp_mod *v, int pointer_type);
     int (*server_set_pointer_position)(struct xrdp_mod *v, int x, int y);
-    tintptr server_dumby[100 - 53]; /* align, 100 minus the number of server
+    int (*server_frame_marker)(struct xrdp_mod *v, int action, int frame_id);
+    tintptr server_dumby[100 - 54]; /* align, 100 minus the number of server
                                      functions above */
     /* common */
     tintptr handle; /* pointer to self as int */
