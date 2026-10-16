@@ -357,6 +357,29 @@ focused() {
         $((3 * 12 ** 2)) ]
 }
 
+# --- Opus, for a client that must decode it: ALSA's null device takes PCM
+# only, so FreeRDP offers a compressed format only when its own decoder
+# knows the format tag. (It can not play: FreeRDP also opens a mixer,
+# which the null device has not; only the formats it offers count) --------
+ALSA_FORMATS=
+if [ "$(cat /proc/1/comm)" = systemd ] && grep -q "opus *yes" "$OUT/configure.log"; then
+    kill $CLIENT 2>/dev/null || true
+    sleep 3
+    CHANSRV_LOG=$(ls /home/tester/.local/share/xrdp/xrdp-chansrv.*.log 2>/dev/null | head -1)
+    log_from=$(($(wc -l < "${CHANSRV_LOG:-/dev/null}") + 1))
+    ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+        /size:1280x800 /bpp:$BPP -grab-keyboard /sound:sys:alsa,dev:null \
+        > "$OUT/client-alsa.log" 2>&1 &
+    CLIENT=$!
+    sleep 8
+    # the formats this client offered, as chansrv logs them
+    ALSA_FORMATS=$(tail -n +"$log_from" "${CHANSRV_LOG:-/dev/null}" |
+                   awk '/sound_process_output_format:/ { f = 1; next }
+                        f && /wFormatTag/ { print $NF; f = 0 }' | tr '\n' ' ')
+    echo "audio: a client with ALSA's null device offered: $ALSA_FORMATS"
+    kill $CLIENT 2>/dev/null || true
+fi
+
 echo "=== result ==="
 echo "sway output: connected $SIZE_CONNECTED, resized $SIZE_RESIZED"
 pass=0
@@ -506,6 +529,11 @@ if [ "$(cat /proc/1/comm)" = systemd ]; then
         echo "audio: Opus is client format $OPUS_INDEX, waves came as $WAVE_FORMATS"
         check "audio: the sound comes as Opus, not PCM" \
             '[ "$OPUS_INDEX" -ge 0 ] && [ "$WAVE_FORMATS" = "$OPUS_INDEX" ]'
+        # The fake backend takes any format, so FreeRDP offers Opus even
+        # under a tag it can not decode. A client whose device takes PCM
+        # only offers what it can decode: Opus only under FreeRDP's tag
+        check "audio: a client that must decode is offered Opus" \
+            'echo "$ALSA_FORMATS" | grep -q "WAVE_FORMAT_OPUS"'
     fi
 fi
 echo "passed $pass, failed $fail"
