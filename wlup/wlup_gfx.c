@@ -59,9 +59,6 @@
 #define GFX_CMDID_STARTFRAME 0x000B
 #define GFX_CMDID_ENDFRAME 0x000C
 
-/* A frame waiting longer than this for its ack is taken as lost */
-#define ACK_TIMEOUT_MS 2000
-
 /******************************************************************************/
 void
 wlup_gfx_init(struct wlup *v, const struct xrdp_client_info *ci)
@@ -475,7 +472,7 @@ wlup_gfx_poll(struct wlup *v)
     {
         unsigned int waited = g_get_elapsed_ms() - v->gfx_sent_time;
 
-        if (waited < ACK_TIMEOUT_MS)
+        if (waited < WLUP_ACK_TIMEOUT_MS)
         {
             /* The damage goes into the next frame */
             return 0;
@@ -519,7 +516,7 @@ wlup_gfx_get_timeout(struct wlup *v, int *timeout)
     {
         return;
     }
-    left = ACK_TIMEOUT_MS - (int)(g_get_elapsed_ms() - v->gfx_sent_time);
+    left = WLUP_ACK_TIMEOUT_MS - (int)(g_get_elapsed_ms() - v->gfx_sent_time);
     left = MAX(left, 0);
     if (*timeout < 0 || *timeout > left)
     {

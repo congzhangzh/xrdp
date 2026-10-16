@@ -91,9 +91,16 @@ wlup_backend_mutter(void);
 
 /* --- What the core offers backends ------------------------------------- */
 
+/* An update of the RDP client's screen: wlup_paint_region() calls go
+ * between these two */
+void
+wlup_begin_update(struct wlup *v);
+void
+wlup_end_update(struct wlup *v);
+
 /* Paints a rectangle of the desktop image to the RDP client, or adds it
- * to the next GFX H.264 frame. Call between server_begin_update() and
- * server_end_update(). return error */
+ * to the next GFX H.264 frame. Call between wlup_begin_update() and
+ * wlup_end_update(). return error */
 int
 wlup_paint_region(struct wlup *v, int x, int y, int cx, int cy);
 
@@ -103,8 +110,9 @@ wlup_paint_region(struct wlup *v, int x, int y, int cx, int cy);
 int
 wlup_paint_damage(struct wlup *v);
 
-/* Whether frames are wanted now: not while output is suppressed, and
- * not while xrdp still holds much of what wlup painted for the client */
+/* Whether frames are wanted now: not while output is suppressed, not
+ * while the client has a frame of bitmap output to acknowledge, and not
+ * while xrdp still holds much of what wlup painted for the client */
 int
 wlup_wants_frames(struct wlup *v);
 
