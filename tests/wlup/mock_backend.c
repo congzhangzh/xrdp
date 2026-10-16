@@ -176,6 +176,16 @@ server_paint_rect(struct wlup *v, int x, int y, int cx, int cy,
 }
 
 static int
+server_frame_marker(struct wlup *v, int action, int frame_id)
+{
+    server.markers++;
+    server.last_marker_action = action;
+    server.last_marker_id = frame_id;
+    server.end_updates_at_marker = server.end_updates;
+    return server.frame_marker_rv;
+}
+
+static int
 server_set_fgcolor(struct wlup *v, int fgcolor)
 {
     return 0;
@@ -245,6 +255,7 @@ mock_module_create(int width, int height)
     v->server_begin_update = server_begin_update;
     v->server_end_update = server_end_update;
     v->server_paint_rect = server_paint_rect;
+    v->server_frame_marker = server_frame_marker;
     v->server_set_fgcolor = server_set_fgcolor;
     v->server_fill_rect = server_fill_rect;
     v->server_msg = server_msg;

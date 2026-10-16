@@ -592,7 +592,7 @@ on_process(void *data)
         }
         return;
     }
-    v->server_begin_update(v);
+    wlup_begin_update(v);
     if (full)
     {
         wlup_paint_region(v, 0, 0, m->width, m->height);
@@ -606,7 +606,7 @@ on_process(void *data)
                               rects[i * 4 + 2], rects[i * 4 + 3]);
         }
     }
-    v->server_end_update(v);
+    wlup_end_update(v);
 }
 
 /******************************************************************************/
@@ -1730,13 +1730,13 @@ mutter_frames_wanted(struct wlup *v)
         return;
     }
     sort_held(m);
-    v->server_begin_update(v);
+    wlup_begin_update(v);
     for (i = 0; i < m->num_held; ++i)
     {
         wlup_paint_region(v, m->held[i * 4], m->held[i * 4 + 1],
                           m->held[i * 4 + 2], m->held[i * 4 + 3]);
     }
-    v->server_end_update(v);
+    wlup_end_update(v);
     m->num_held = 0;
     m->held_box = 0;
 }
