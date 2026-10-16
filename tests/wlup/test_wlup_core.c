@@ -19,6 +19,9 @@
 #include "config_ac.h"
 #endif
 
+#include <limits.h>
+
+#include "os_calls.h"
 #include "scancode.h"
 #include "trans.h"
 #include "wlup_backend.h"
@@ -155,6 +158,95 @@ START_TEST(test_paint_is_clipped)
 END_TEST
 
 /******************************************************************************/
+/* Bitmap output goes in frames the client acknowledges: the end marker
+ * follows the update's output, and no frames are wanted until the ack */
+START_TEST(test_bitmap_frame_acked)
+{
+    wlup_begin_update(v);
+    wlup_paint_region(v, 0, 0, 10, 10);
+    wlup_paint_region(v, 20, 20, 10, 10);
+    ck_assert_int_eq(server.markers, 1);
+    ck_assert_int_eq(server.last_marker_action, 0);
+    ck_assert_int_eq(server.last_marker_id, 1);
+    wlup_end_update(v);
+    ck_assert_int_eq(server.markers, 2);
+    ck_assert_int_eq(server.last_marker_action, 1);
+    ck_assert_int_eq(server.last_marker_id, 1);
+    ck_assert_int_eq(server.end_updates_at_marker, 1);
+    ck_assert_int_eq(wlup_wants_frames(v), 0);
+
+    /* xrdp passes the client's ack on as INT_MAX, having no encoder */
+    v->mod_frame_ack(v, 0, INT_MAX);
+    ck_assert_int_eq(wlup_wants_frames(v), 1);
+    ck_assert_int_eq(mock.frames_wanted, 1);
+
+    wlup_begin_update(v);
+    wlup_paint_region(v, 0, 0, 10, 10);
+    wlup_end_update(v);
+    ck_assert_int_eq(server.last_marker_id, 2);
+    ck_assert_int_eq(wlup_wants_frames(v), 0);
+}
+END_TEST
+
+/* An update that paints nothing is no frame */
+START_TEST(test_bitmap_empty_update)
+{
+    wlup_begin_update(v);
+    wlup_end_update(v);
+    ck_assert_int_eq(server.markers, 0);
+    ck_assert_int_eq(wlup_wants_frames(v), 1);
+}
+END_TEST
+
+/* GFX, an encoder or a client without frame acks: xrdp refuses the
+ * marker once, and its output queue is all the pacing from then on */
+START_TEST(test_bitmap_no_frame_acks)
+{
+    server.frame_marker_rv = 1;
+    wlup_begin_update(v);
+    wlup_paint_region(v, 0, 0, 10, 10);
+    wlup_end_update(v);
+    ck_assert_int_eq(server.paints, 1);
+    ck_assert_int_eq(server.markers, 1);
+    ck_assert_int_eq(wlup_wants_frames(v), 1);
+
+    wlup_begin_update(v);
+    wlup_paint_region(v, 0, 0, 10, 10);
+    wlup_end_update(v);
+    ck_assert_int_eq(server.markers, 1);
+}
+END_TEST
+
+/* A late ack: the next frame goes anyway, WLUP_ACK_TIMEOUT_MS after
+ * xrdp has sent all of the last one, not while it still holds some */
+START_TEST(test_bitmap_ack_late)
+{
+    struct source_info si = { 0 };
+    int timeout = -1;
+
+    wlup_begin_update(v);
+    wlup_paint_region(v, 0, 0, 10, 10);
+    wlup_end_update(v);
+    v->mod_get_wait_objs(v, NULL, NULL, NULL, NULL, &timeout);
+    ck_assert_int_gt(timeout, 0);
+    ck_assert_int_le(timeout, WLUP_ACK_TIMEOUT_MS);
+
+    v->bitmap_sent_time = g_get_elapsed_ms() - WLUP_ACK_TIMEOUT_MS - 1;
+    v->si = &si;
+    si.source[XRDP_SOURCE_MOD] = 1;
+    ck_assert_int_eq(wlup_wants_frames(v), 0);
+
+    si.source[XRDP_SOURCE_MOD] = 0;
+    v->bitmap_sent_time = g_get_elapsed_ms() - WLUP_ACK_TIMEOUT_MS - 1;
+    timeout = -1;
+    v->mod_get_wait_objs(v, NULL, NULL, NULL, NULL, &timeout);
+    ck_assert_int_eq(timeout, 0);
+    ck_assert_int_eq(wlup_wants_frames(v), 1);
+    v->si = NULL;
+}
+END_TEST
+
+/******************************************************************************/
 /* The backend gets Linux evdev codes, whatever the RDP scancode set */
 START_TEST(test_key_is_evdev)
 {
@@ -239,6 +331,10 @@ make_suite_wlup_core(void)
     tcase_add_test(tc, test_backend_error_ends_session);
     tcase_add_test(tc, test_suppress_and_resume);
     tcase_add_test(tc, test_paint_is_clipped);
+    tcase_add_test(tc, test_bitmap_frame_acked);
+    tcase_add_test(tc, test_bitmap_empty_update);
+    tcase_add_test(tc, test_bitmap_no_frame_acks);
+    tcase_add_test(tc, test_bitmap_ack_late);
     tcase_add_test(tc, test_key_is_evdev);
     tcase_add_test(tc, test_mouse_is_forwarded);
     tcase_add_test(tc, test_resize_in_progress);

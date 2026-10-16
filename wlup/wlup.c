@@ -41,7 +41,8 @@
 /* Output (bytes) xrdp may hold queued for the client while it waits for
  * the network, from what wlup painted, before wlup stops capturing, as
  * neutrinordp does. Frames that go through the H.264 encoder are paced
- * by frame acks instead */
+ * by frame acks instead, and so is bitmap output, if the client
+ * acknowledges frames: see bitmap_frame_acked() */
 #define MAX_QUEUED_MODULE_OUTPUT 50000
 
 #if !defined(XRDP_WLUP_MUTTER)
@@ -55,6 +56,93 @@ wlup_backend_mutter(void)
 
 /******************************************************************************/
 /* Painting                                                                   */
+/******************************************************************************/
+
+/* Bitmap output goes in frames the client acknowledges, if it does: the
+ * first paint of an update begins one, wlup_end_update() ends it */
+static void
+begin_bitmap_frame(struct wlup *v)
+{
+    if (v->bitmap_frame_open || v->bitmap_acks < 0)
+    {
+        return;
+    }
+    if (v->server_frame_marker == NULL ||
+            v->server_frame_marker(v, 0, v->bitmap_frame_id + 1) != 0)
+    {
+        /* GFX, an encoder, or a client that does not acknowledge
+         * frames: xrdp's output queue is all the pacing */
+        v->bitmap_acks = -1;
+        LOG(LOG_LEVEL_INFO, "wlup: bitmap output is paced by xrdp's "
+            "output queue");
+        return;
+    }
+    if (v->bitmap_acks == 0)
+    {
+        v->bitmap_acks = 1;
+        LOG(LOG_LEVEL_INFO, "wlup: bitmap output is paced by the client's "
+            "frame acks");
+    }
+    v->bitmap_frame_id++;
+    v->bitmap_frame_open = 1;
+}
+
+/******************************************************************************/
+/* Whether the client has acknowledged the last frame of bitmap output.
+ * Its ack is late WLUP_ACK_TIMEOUT_MS after xrdp has sent all of the
+ * frame; then the next one goes anyway */
+static int
+bitmap_frame_acked(struct wlup *v)
+{
+    unsigned int waited;
+
+    if (v->bitmap_frame_acked >= v->bitmap_frame_id)
+    {
+        return 1;
+    }
+    if (v->bitmap_frame_open)
+    {
+        return 0;
+    }
+    if (v->si != NULL && v->si->source[XRDP_SOURCE_MOD] > 0)
+    {
+        /* The client can't have it all yet */
+        v->bitmap_sent_time = g_get_elapsed_ms();
+        return 0;
+    }
+    waited = g_get_elapsed_ms() - v->bitmap_sent_time;
+    if (waited < WLUP_ACK_TIMEOUT_MS)
+    {
+        return 0;
+    }
+    LOG(LOG_LEVEL_INFO, "wlup: no ack for bitmap frame %d after %u ms, "
+        "going on without it", v->bitmap_frame_id, waited);
+    v->bitmap_frame_acked = v->bitmap_frame_id;
+    return 1;
+}
+
+/******************************************************************************/
+void
+wlup_begin_update(struct wlup *v)
+{
+    v->server_begin_update(v);
+}
+
+/******************************************************************************/
+void
+wlup_end_update(struct wlup *v)
+{
+    /* xrdp sends the update's orders and bitmaps here, before the end
+     * marker that follows them */
+    v->server_end_update(v);
+    if (v->bitmap_frame_open)
+    {
+        v->bitmap_frame_open = 0;
+        v->bitmap_sent_time = g_get_elapsed_ms();
+        v->server_frame_marker(v, 1, v->bitmap_frame_id);
+    }
+}
+
 /******************************************************************************/
 
 /* Paints a rectangle of our copy of the desktop to the RDP client,
@@ -94,6 +182,7 @@ paint_region(struct wlup *v, int x, int y, int cx, int cy)
         wlup_gfx_add_damage(v, x, y, right - x, bottom - y);
         return 0;
     }
+    begin_bitmap_frame(v);
     return v->server_paint_rect(v, x, y, right - x, bottom - y,
                                 v->pixels, v->buffer_width, v->buffer_height,
                                 x, y);
@@ -119,7 +208,7 @@ wlup_paint_damage(struct wlup *v)
         return 0;
     }
 
-    v->server_begin_update(v);
+    wlup_begin_update(v);
     if (v->need_full_paint)
     {
         error = paint_region(v, 0, 0, v->buffer_width, v->buffer_height);
@@ -139,7 +228,7 @@ wlup_paint_damage(struct wlup *v)
                                  v->damage[i * 4 + 2], v->damage[i * 4 + 3]);
         }
     }
-    v->server_end_update(v);
+    wlup_end_update(v);
     /* With the H.264 encoder, the damage goes now if the last frame has
      * been acknowledged */
     wlup_gfx_poll(v);
@@ -150,12 +239,17 @@ wlup_paint_damage(struct wlup *v)
 /* Frames are not wanted:
  * - while output is suppressed. The compositor collects the damage
  *   meanwhile, and the first frame after the resume carries it
+ * - while the client has not acknowledged the last frame of bitmap
+ *   output. Damage collects meanwhile, so the next update holds all
+ *   that changed until the client was ready for it, not a queue of
+ *   older updates. lib_mod_frame_ack() runs as the ack comes
  * - while xrdp still holds more than MAX_QUEUED_MODULE_OUTPUT of what wlup
  *   painted. lib_mod_check_wait_objs() runs again as it is sent */
 int
 wlup_wants_frames(struct wlup *v)
 {
     return !v->suppress_output &&
+           bitmap_frame_acked(v) &&
            (v->si == NULL ||
             v->si->source[XRDP_SOURCE_MOD] <= MAX_QUEUED_MODULE_OUTPUT);
 }
@@ -239,10 +333,10 @@ lib_mod_event(struct wlup *v, int msg, long param1, long param2,
             }
             break;
         case WM_INVALIDATE:
-            v->server_begin_update(v);
+            wlup_begin_update(v);
             error = paint_region(v, (param1 >> 16) & 0xffff, param1 & 0xffff,
                                  (param2 >> 16) & 0xffff, param2 & 0xffff);
-            v->server_end_update(v);
+            wlup_end_update(v);
             break;
         default:
             if (msg >= WM_MOUSEMOVE && msg <= WM_BUTTON9DOWN &&
@@ -386,6 +480,28 @@ lib_mod_signal(struct wlup *v)
 }
 
 /******************************************************************************/
+/* Wakes xrdp when the ack of the last bitmap frame is late */
+static void
+bitmap_get_timeout(struct wlup *v, int *timeout)
+{
+    int left;
+
+    if (v->bitmap_frame_acked >= v->bitmap_frame_id || v->bitmap_frame_open)
+    {
+        return;
+    }
+    /* 0 if it has just become late: what waits for it goes now */
+    left = bitmap_frame_acked(v) ? 0 :
+           WLUP_ACK_TIMEOUT_MS -
+           (int)(g_get_elapsed_ms() - v->bitmap_sent_time);
+    left = MAX(left, 0);
+    if (*timeout < 0 || *timeout > left)
+    {
+        *timeout = left;
+    }
+}
+
+/******************************************************************************/
 /* return error */
 static int
 lib_mod_get_wait_objs(struct wlup *v, tbus *read_objs, int *rcount,
@@ -399,6 +515,7 @@ lib_mod_get_wait_objs(struct wlup *v, tbus *read_objs, int *rcount,
     if (v != NULL)
     {
         wlup_gfx_get_timeout(v, timeout);
+        bitmap_get_timeout(v, timeout);
     }
     return 0;
 }
@@ -452,6 +569,11 @@ lib_mod_check_wait_objs(struct wlup *v)
 static int
 lib_mod_frame_ack(struct wlup *v, int flags, int frame_id)
 {
+    if (frame_id > v->bitmap_frame_acked)
+    {
+        /* INT_MAX when xrdp has no encoder: every frame is done */
+        v->bitmap_frame_acked = MIN(frame_id, v->bitmap_frame_id);
+    }
     wlup_gfx_frame_ack(v, frame_id);
     frames_wanted(v);
     return 0;
@@ -468,9 +590,9 @@ lib_mod_suppress_output(struct wlup *v, int suppress,
     v->suppress_output = suppress;
     if (!suppress)
     {
-        v->server_begin_update(v);
+        wlup_begin_update(v);
         paint_region(v, 0, 0, v->buffer_width, v->buffer_height);
-        v->server_end_update(v);
+        wlup_end_update(v);
         wlup_gfx_poll(v);
         frames_wanted(v);
     }
@@ -518,9 +640,9 @@ lib_mod_server_monitor_full_invalidate(struct wlup *v, int width, int height)
 {
     /* xrdp has a new encoder after a resize: start over with a full frame */
     wlup_gfx_reset(v);
-    v->server_begin_update(v);
+    wlup_begin_update(v);
     paint_region(v, 0, 0, v->buffer_width, v->buffer_height);
-    v->server_end_update(v);
+    wlup_end_update(v);
     wlup_gfx_poll(v);
     return 0;
 }

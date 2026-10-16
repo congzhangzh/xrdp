@@ -60,6 +60,11 @@ struct mock_server
     int last_paint_cx;
     int last_paint_cy;
     int resize_dones;
+    int frame_marker_rv;  /* server_frame_marker() returns this */
+    int markers;          /* server_frame_marker() calls */
+    int last_marker_action;
+    int last_marker_id;
+    int end_updates_at_marker; /* end_updates at the last marker */
     int channel_id;       /* server_get_channel_id() returns this */
     /* PDUs sent on a channel, after reassembling chunks */
     int pdus;

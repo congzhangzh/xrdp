@@ -130,7 +130,9 @@ struct wlup
     int (*server_egfx_cmd)(struct wlup *v, char *cmd, int cmd_bytes,
                            char *data, int data_bytes);
     int (*server_set_pointer_system)(struct wlup *v, int pointer_type);
-    tintptr server_dumby[100 - 52]; /* align, 100 minus the number of server
+    tintptr server_unused3[53 - 52]; /* server function 53 */
+    int (*server_frame_marker)(struct wlup *v, int action, int frame_id);
+    tintptr server_dumby[100 - 54]; /* align, 100 minus the number of server
                                      functions above */
     /* common */
     tintptr handle; /* pointer to self as long */
@@ -159,6 +161,15 @@ struct wlup
      * compositor may write to the image (the backend's pixels_busy()) */
     char *gfx_shadow;
     size_t gfx_shadow_size;
+
+    /* bitmap output (no GFX) in frames the client acknowledges, if it
+     * does (server_frame_marker()): the next frame waits for the ack */
+    int bitmap_acks;         /* 1 yes, -1 no, 0 not known yet */
+    int bitmap_frame_open;   /* begin marker sent, end marker not yet */
+    int bitmap_frame_id;     /* last frame begun */
+    int bitmap_frame_acked;  /* last frame the client acknowledged */
+    unsigned int bitmap_sent_time; /* g_get_elapsed_ms() when xrdp last
+                                      held output of the last frame */
 
     /* settings from xrdp.ini */
     char display_name[256]; /* WAYLAND_DISPLAY name or absolute path */
@@ -194,6 +205,9 @@ struct wlup
     int num_damage;
     int damage_overflow;
 };
+
+/* A frame waiting longer than this for its ack is taken as lost */
+#define WLUP_ACK_TIMEOUT_MS 2000
 
 #include "wlup_backend.h"
 

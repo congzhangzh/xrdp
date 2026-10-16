@@ -252,6 +252,10 @@ check "keyboard: typed command ran in the GNOME session" \
     '[ "$(cat /tmp/typed.txt 2>/dev/null)" = mutter-typed-42 ]'
 clipboard_checks
 drive_mic_checks
+check "bitmap: paced by the client's frame acks" \
+    'grep -q "wlup: bitmap output is paced by the client.s frame acks" /var/log/xrdp.log'
+check "bitmap: every frame acknowledged in time (no ack timeout)" \
+    '! grep -q "wlup: no ack for bitmap frame" /var/log/xrdp.log'
 check "left button press"   'grep -a -q "button: 272.*state: 1" /tmp/wev.log'
 check "left button release" 'grep -a -q "button: 272.*state: 0" /tmp/wev.log'
 check "right button"        'grep -a -q "button: 273" /tmp/wev.log'

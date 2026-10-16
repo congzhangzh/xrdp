@@ -278,6 +278,10 @@ check "connect: output has the client size 1280x800" \
     '[ "$SIZE_CONNECTED" = 1280x800 ]'
 check "keyboard: typed command ran in sway" \
     '[ "$(cat /tmp/typed.txt 2>/dev/null)" = wlup-typed-42 ]'
+check "bitmap: paced by the client's frame acks" \
+    'grep -q "wlup: bitmap output is paced by the client.s frame acks" /var/log/xrdp.log'
+check "bitmap: every frame acknowledged in time (no ack timeout)" \
+    '! grep -q "wlup: no ack for bitmap frame" /var/log/xrdp.log'
 clipboard_checks
 drive_mic_checks
 check "left button press"   'grep -a -q "button: 272.*state: 1" /tmp/wev.log'
