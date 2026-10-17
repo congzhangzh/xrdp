@@ -357,26 +357,43 @@ focused() {
         $((3 * 12 ** 2)) ]
 }
 
-# --- Opus, for a client that must decode it: ALSA's null device takes PCM
-# only, so FreeRDP offers a compressed format only when its own decoder
-# knows the format tag. (It can not play: FreeRDP also opens a mixer,
-# which the null device has not; only the formats it offers count) --------
-ALSA_FORMATS=
-if [ "$(cat /proc/1/comm)" = systemd ] && grep -q "opus *yes" "$OUT/configure.log"; then
+# --- Opus, for a client that must decode it and play the sound. It plays
+# into a null sink of the client's PulseAudio (the microphone test's, see
+# drive-mic-tests.sh), which takes PCM only, so FreeRDP offers a compressed
+# format only when its own decoder knows the format tag, and decodes what
+# comes in it. The session plays a 1 kHz tone, and what the client played
+# is recorded from the sink's monitor -------------------------------------
+PULSE_FORMATS=
+if [ -n "$HAVE_MIC" ] && grep -q "opus *yes" "$OUT/configure.log"; then
     kill $CLIENT 2>/dev/null || true
     sleep 3
     CHANSRV_LOG=$(ls /home/tester/.local/share/xrdp/xrdp-chansrv.*.log 2>/dev/null | head -1)
     log_from=$(($(wc -l < "${CHANSRV_LOG:-/dev/null}") + 1))
+    pactl load-module module-null-sink sink_name=speaker rate=48000 > /dev/null
+    pactl set-default-sink speaker
     ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
-        /size:1280x800 /bpp:$BPP -grab-keyboard /sound:sys:alsa,dev:null \
-        > "$OUT/client-alsa.log" 2>&1 &
+        /size:1280x800 /bpp:$BPP -grab-keyboard /sound:sys:pulse \
+        /log-filters:com.freerdp.channels.rdpsnd.client:DEBUG \
+        > "$OUT/client-pulse.log" 2>&1 &
     CLIENT=$!
     sleep 8
     # the formats this client offered, as chansrv logs them
-    ALSA_FORMATS=$(tail -n +"$log_from" "${CHANSRV_LOG:-/dev/null}" |
-                   awk '/sound_process_output_format:/ { f = 1; next }
-                        f && /wFormatTag/ { print $NF; f = 0 }' | tr '\n' ' ')
-    echo "audio: a client with ALSA's null device offered: $ALSA_FORMATS"
+    PULSE_FORMATS=$(tail -n +"$log_from" "${CHANSRV_LOG:-/dev/null}" |
+                    awk '/sound_process_output_format:/ { f = 1; next }
+                         f && /wFormatTag/ { print $NF; f = 0 }' | tr '\n' ' ')
+    echo "audio: a client playing into PulseAudio offered: $PULSE_FORMATS"
+    timeout 7 parecord --device=speaker.monitor --raw --format=s16le \
+        --rate=48000 --channels=2 \
+        > "$OUT/client-played.raw" 2> "$OUT/parecord.log" &
+    RECORDER=$!
+    sleep 1
+    as_session "sox -n -r 48000 -c 2 -b 16 -e signed -t raw - synth 3 sine 1000 vol 0.5 |
+        pw-cat --playback --raw --target xrdp-sink --format s16 --rate 48000 \
+        --channels 2 -" > "$OUT/pw-cat-tone.log" 2>&1 || true
+    wait $RECORDER || true # timeout ends it
+    read -r PLAYED_RMS PLAYED_HZ < <(python3 "$SRC/wlup/test/tone.py" \
+                                     "$OUT/client-played.raw" || echo 0 0)
+    echo "audio: the decoding client played rms $PLAYED_RMS at $PLAYED_HZ Hz"
     kill $CLIENT 2>/dev/null || true
 fi
 
@@ -533,7 +550,20 @@ if [ "$(cat /proc/1/comm)" = systemd ]; then
         # under a tag it can not decode. A client whose device takes PCM
         # only offers what it can decode: Opus only under FreeRDP's tag
         check "audio: a client that must decode is offered Opus" \
-            'echo "$ALSA_FORMATS" | grep -q "WAVE_FORMAT_OPUS"'
+            'echo "$PULSE_FORMATS" | grep -q "WAVE_FORMAT_OPUS"'
+        PULSE_OPUS_INDEX=$(echo "$PULSE_FORMATS" | tr ' ' '\n' |
+                           grep -n "WAVE_FORMAT_OPUS" | head -1 | cut -d: -f1)
+        PULSE_OPUS_INDEX=$((${PULSE_OPUS_INDEX:-0} - 1))
+        PULSE_WAVES=$(grep -o "WaveInfo: cBlockNo: [0-9]* wFormatNo: [0-9]*" \
+                      "$OUT/client-pulse.log" | awk '{print $NF}' | sort -u)
+        echo "audio: decoding client's Opus is format $PULSE_OPUS_INDEX, waves came as $PULSE_WAVES"
+        check "audio: the decoding client gets the sound as Opus" \
+            '[ "$PULSE_OPUS_INDEX" -ge 0 ] && [ "$PULSE_WAVES" = "$PULSE_OPUS_INDEX" ]'
+        # Opus runs at 48 kHz, chansrv resamples the sink's 44.1 kHz: at
+        # the wrong rate the tone would come out 9 % off (919 or 1088 Hz)
+        check "audio: the client decodes and plays the session's 1 kHz tone" \
+            'awk -v r="$PLAYED_RMS" -v f="$PLAYED_HZ" \
+                 "BEGIN { exit !(r > 0.1 && f > 980 && f < 1020) }"'
     fi
 fi
 echo "passed $pass, failed $fail"
