@@ -23,6 +23,7 @@ EXTRA_DIST = \
   test1.jpg \
   test_alpha_blend.png \
   gfx/gfx.toml \
+  gfx/gfx_av1_threads.toml \
   gfx/gfx_codec_av1_only.toml \
   gfx/gfx_codec_av1_preferred.toml \
   gfx/gfx_codec_h264_only.toml \

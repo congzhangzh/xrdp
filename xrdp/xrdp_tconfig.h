@@ -53,6 +53,11 @@ struct xrdp_tconfig_gfx_openh264_param
     float MaxFrameRate;
 };
 
+struct xrdp_tconfig_gfx_av1_param
+{
+    int threads;
+};
+
 enum xrdp_tconfig_codecs
 {
     XTC_H264,
@@ -80,6 +85,8 @@ struct xrdp_tconfig_gfx
     struct xrdp_tconfig_gfx_x264_param x264_param[NUM_CONNECTION_TYPES];
     struct xrdp_tconfig_gfx_openh264_param
         openh264_param[NUM_CONNECTION_TYPES];
+    /* store AV1 (libaom) parameters for each connection type */
+    struct xrdp_tconfig_gfx_av1_param av1_param[NUM_CONNECTION_TYPES];
 };
 
 static const char *const rdpbcgr_connection_type_names[] =
