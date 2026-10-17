@@ -236,6 +236,10 @@ static int g_current_client_format_index = 0;
 /* index into list from server */
 static int g_current_server_format_index = 0;
 
+/* the client has sent its formats; until then it can not take a wave,
+ * which names one of them */
+static int g_client_formats_received = 0;
+
 static int sound_sndsrvr_source_data_in(struct trans *trans);
 static int sound_start_source_listener(void);
 static int sound_start_sink_listener(void);
@@ -456,6 +460,7 @@ sound_process_output_formats(struct stream *s, int size)
                                         nAvgBytesPerSec, nBlockAlign, wBitsPerSample,
                                         cbSize, data);
         }
+        g_client_formats_received = 1;
         sound_send_training();
     }
 
@@ -1211,6 +1216,16 @@ process_pcm_message(int id, int size, struct stream *s)
 {
     static int sending_silence = 0;
     static unsigned int silence_start_time = 0;
+
+    if (!g_client_formats_received)
+    {
+        /* The sound server connects as soon as chansrv listens, which is
+         * before the client has sent its formats when a session that is
+         * playing is reconnected. Drop the sound until then */
+        LOG_DEVEL(LOG_LEVEL_DEBUG, "process_pcm_message: dropped, "
+                  "no formats from the client yet");
+        return 0;
+    }
     switch (id)
     {
         case 0:
@@ -1401,6 +1416,8 @@ sound_init(void)
 
     /* save data from sound_server_source */
     g_in_fifo = fifo_create(in_fifo_item_destructor);
+
+    g_client_formats_received = 0;
 
     g_client_does_fdk_aac = 0;
     g_client_fdk_aac_index = 0;
