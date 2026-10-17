@@ -397,7 +397,68 @@ if [ -n "$HAVE_MIC" ] && grep -q "opus *yes" "$OUT/configure.log"; then
     kill $CLIENT 2>/dev/null || true
 fi
 
+# --- Sound after a reconnect while the session keeps playing. chansrv
+# listens for the sound server again as soon as xrdp reconnects, and the
+# session's PipeWire, still playing, connects and sends at once: before
+# the client has said which formats it takes. The sound server retries
+# about once a second, so this happens every time when the client's
+# formats take longer than that: the reconnect goes over a link with a
+# 1.2 s round trip (netem on lo; the sound server's socket is not on lo) ---
+RECONNECT_RMS=0
+RECONNECT_HZ=0
+RECONNECT_TRAINED=0
+if [ -n "$HAVE_MIC" ] && grep -q "opus *yes" "$OUT/configure.log" &&
+        command -v tc > /dev/null; then
+    kill $CLIENT 2>/dev/null || true
+    sleep 3
+    as_session "sox -n -r 48000 -c 2 -b 16 -e signed -t raw - synth 150 sine 1000 vol 0.5 |
+        pw-cat --playback --raw --target xrdp-sink --format s16 --rate 48000 \
+        --channels 2 -" > "$OUT/pw-cat-long-tone.log" 2>&1 &
+    for n in 1 2; do
+        CHANSRV_LOG=$(ls /home/tester/.local/share/xrdp/xrdp-chansrv.*.log 2>/dev/null | head -1)
+        log_from=$(($(wc -l < "${CHANSRV_LOG:-/dev/null}") + 1))
+        if [ $n = 2 ]; then
+            # the ack timeout checks only count what came before
+            XRDP_LOG_BEFORE_SLOW_LINK=$(wc -l < /var/log/xrdp.log)
+            tc qdisc add dev lo root netem delay 600ms
+        fi
+        ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+            /size:1280x800 /bpp:$BPP -grab-keyboard /sound:sys:pulse \
+            /log-filters:com.freerdp.channels.rdpsnd.client:DEBUG \
+            > "$OUT/client-reconnect-$n.log" 2>&1 &
+        CLIENT=$!
+        # until the client has sent its formats, then a few round trips
+        for _ in $(seq 120); do
+            tail -n +"$log_from" "${CHANSRV_LOG:-/dev/null}" |
+                grep -q "sound_process_output_format" && break
+            sleep 1
+        done
+        sleep 6
+        if [ $n = 1 ]; then
+            kill $CLIENT 2>/dev/null || true
+            sleep 3
+        fi
+    done
+    tail -n +"$log_from" "${CHANSRV_LOG:-/dev/null}" > "$OUT/chansrv-reconnect.log"
+    grep -q "sound_process_training" "$OUT/chansrv-reconnect.log" &&
+        RECONNECT_TRAINED=1
+    timeout 5 parecord --device=speaker.monitor --raw --format=s16le \
+        --rate=48000 --channels=2 \
+        > "$OUT/client-reconnect-played.raw" 2> "$OUT/parecord-reconnect.log" || true
+    read -r RECONNECT_RMS RECONNECT_HZ < <(python3 "$SRC/wlup/test/tone.py" \
+                                     "$OUT/client-reconnect-played.raw" || echo 0 0)
+    echo "audio: after a reconnect while playing, the client played rms $RECONNECT_RMS at $RECONNECT_HZ Hz"
+    kill $CLIENT 2>/dev/null || true
+    tc qdisc del dev lo root 2>/dev/null || true
+    pkill -x pw-cat 2>/dev/null || true
+fi
+
 echo "=== result ==="
+# xrdp's log up to the reconnect over the slow link, where a frame ack may
+# take longer than the timeout
+xrdp_log_fast_link() {
+    head -n "${XRDP_LOG_BEFORE_SLOW_LINK:-1000000000}" /var/log/xrdp.log
+}
 echo "sway output: connected $SIZE_CONNECTED, resized $SIZE_RESIZED"
 pass=0
 fail=0
@@ -417,7 +478,7 @@ check "keyboard: typed command ran in sway" \
 check "bitmap: paced by the client's frame acks" \
     'grep -q "wlup: bitmap output is paced by the client.s frame acks" /var/log/xrdp.log'
 check "bitmap: every frame acknowledged in time (no ack timeout)" \
-    '! grep -q "wlup: no ack for bitmap frame" /var/log/xrdp.log'
+    '! xrdp_log_fast_link | grep -q "wlup: no ack for bitmap frame"'
 clipboard_checks
 drive_mic_checks
 check "left button press"   'grep -a -q "button: 272.*state: 1" /tmp/wev.log'
@@ -442,7 +503,7 @@ check "h264: frames go to the GFX H.264 encoder" \
     'grep -q "wlup: frames go to the GFX H.264 encoder" /var/log/xrdp.log &&
      grep -q "wlup: first H.264 frames sent" /var/log/xrdp.log'
 check "h264: every frame acknowledged in time (no ack timeout)" \
-    '! grep -q "wlup: no ack for frame" /var/log/xrdp.log'
+    '! xrdp_log_fast_link | grep -q "wlup: no ack for frame"'
 check "h264: client shows more than a flat screen" \
     '[ "$(convert "$OUT/client-6-h264.png" -format %k info:)" -gt 50 ]'
 check "h264: input works" \
@@ -564,6 +625,13 @@ if [ "$(cat /proc/1/comm)" = systemd ]; then
         check "audio: the client decodes and plays the session's 1 kHz tone" \
             'awk -v r="$PLAYED_RMS" -v f="$PLAYED_HZ" \
                  "BEGIN { exit !(r > 0.1 && f > 980 && f < 1020) }"'
+        if command -v tc > /dev/null; then
+            check "audio: after a reconnect while playing, the client answers the training" \
+                '[ "$RECONNECT_TRAINED" = 1 ]'
+            check "audio: after a reconnect while playing, the client plays the 1 kHz tone" \
+                'awk -v r="$RECONNECT_RMS" -v f="$RECONNECT_HZ" \
+                     "BEGIN { exit !(r > 0.1 && f > 980 && f < 1020) }"'
+        fi
     fi
 fi
 echo "passed $pass, failed $fail"
