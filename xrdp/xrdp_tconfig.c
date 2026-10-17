@@ -49,6 +49,9 @@
 #define X264_DEFAULT_FPS_DEN 1
 #define X264_DEFAULT_THREADS 1 /* not to exhaust CPU threads for 1 user */
 
+#define AV1_DEFAULT_THREADS 2 /* rows are encoded in parallel (row-mt) */
+#define AV1_MAX_THREADS 64 /* libaom refuses more */
+
 const char *
 tconfig_codec_order_to_str(
     const struct xrdp_tconfig_gfx_codec_order *codec_order,
@@ -374,6 +377,56 @@ tconfig_load_gfx_x264_ct(toml_table_t *tfile, const int connection_type,
     return 0;
 }
 
+/* The [AV1] section is optional: without it, the defaults stand */
+static int
+tconfig_load_gfx_av1_ct(toml_table_t *tfile, const int connection_type,
+                        struct xrdp_tconfig_gfx_av1_param *param)
+{
+    TCLOG(LOG_LEVEL_TRACE, "[AV1]");
+
+    if (connection_type >= NUM_CONNECTION_TYPES)
+    {
+        TCLOG(LOG_LEVEL_ERROR, "[AV1] Invalid connection type is given");
+        return 1;
+    }
+
+    toml_table_t *av1 = toml_table_in(tfile, "AV1");
+    if (!av1)
+    {
+        return 1;
+    }
+
+    toml_table_t *av1_ct =
+        toml_table_in(av1, rdpbcgr_connection_type_names[connection_type]);
+    toml_datum_t datum;
+
+    if (!av1_ct)
+    {
+        return 1;
+    }
+
+    /* threads */
+    datum = toml_int_in(av1_ct, "threads");
+    if (datum.ok)
+    {
+        if (datum.u.i >= 1 && datum.u.i <= AV1_MAX_THREADS)
+        {
+            param[connection_type].threads = datum.u.i;
+        }
+        else
+        {
+            TCLOG(LOG_LEVEL_WARNING,
+                  "[AV1.%s] threads must be 1 to %d, "
+                  "adopting the default value [%d]",
+                  rdpbcgr_connection_type_names[connection_type],
+                  AV1_MAX_THREADS, AV1_DEFAULT_THREADS);
+            param[connection_type].threads = AV1_DEFAULT_THREADS;
+        }
+    }
+
+    return 0;
+}
+
 static int tconfig_load_gfx_h264_encoder(toml_table_t *tfile, struct xrdp_tconfig_gfx *config)
 {
     TCLOG(LOG_LEVEL_TRACE, "[codec]");
@@ -539,8 +592,34 @@ disable_codec(struct xrdp_tconfig_gfx_codec_order *co,
     co->codec_count = j;
 }
 
-int
-tconfig_load_gfx(const char *filename, struct xrdp_tconfig_gfx *config)
+/* XRDP_GFX_AV1_THREADS, if set, overrides gfx.toml for every connection
+ * type */
+static void
+tconfig_load_gfx_av1_env(struct xrdp_tconfig_gfx *config)
+{
+    const char *env_var = g_getenv("XRDP_GFX_AV1_THREADS");
+    int threads;
+
+    if (env_var == NULL)
+    {
+        return;
+    }
+    threads = g_atoix(env_var);
+    if (threads < 1 || threads > AV1_MAX_THREADS)
+    {
+        TCLOG(LOG_LEVEL_WARNING, "XRDP_GFX_AV1_THREADS set but invalid %s "
+              "(must be 1 to %d), ignoring it", env_var, AV1_MAX_THREADS);
+        return;
+    }
+    TCLOG(LOG_LEVEL_INFO, "XRDP_GFX_AV1_THREADS set to %d", threads);
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        config->av1_param[ct].threads = threads;
+    }
+}
+
+static int
+tconfig_load_gfx_file(const char *filename, struct xrdp_tconfig_gfx *config)
 {
     FILE *fp;
     char errbuf[200];
@@ -551,6 +630,10 @@ tconfig_load_gfx(const char *filename, struct xrdp_tconfig_gfx *config)
     config->codec.codec_count = 1;
     config->codec.codecs[0] = XTC_RFX;
     memset(config->x264_param, 0, sizeof(config->x264_param));
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        config->av1_param[ct].threads = AV1_DEFAULT_THREADS;
+    }
 
     if ((fp = fopen(filename, "r")) == NULL)
     {
@@ -626,7 +709,32 @@ tconfig_load_gfx(const char *filename, struct xrdp_tconfig_gfx *config)
             rv = 1;
         }
     }
+
+    /* AV1 configuration */
+    if (codec_enabled(&config->codec, XTC_AV1))
+    {
+        /* Read the default params, then copy them to other connection
+         * types and override them */
+        tconfig_load_gfx_av1_ct(tfile, 0, config->av1_param);
+        for (int ct = CONNECTION_TYPE_MODEM; ct < NUM_CONNECTION_TYPES; ct++)
+        {
+            config->av1_param[ct] = config->av1_param[0];
+            tconfig_load_gfx_av1_ct(tfile, ct, config->av1_param);
+        }
+    }
     toml_free(tfile);
+
+    return rv;
+}
+
+int
+tconfig_load_gfx(const char *filename, struct xrdp_tconfig_gfx *config)
+{
+    int rv = tconfig_load_gfx_file(filename, config);
+
+    /* The environment comes before the file, and the file before the
+     * defaults, even when the file could not be loaded */
+    tconfig_load_gfx_av1_env(config);
 
     return rv;
 }

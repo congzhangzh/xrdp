@@ -20,6 +20,9 @@ The file contains following sections:
 .TP
 \fB[OpenH264]\fR \- parameters for Cisco OpenH264 encoder.
 
+.TP
+\fB[AV1]\fR \- parameters for the AV1 encoder (libaom).
+
 .LP
 All options and values are case-sensitive, with some exception, and are
 described in detail below.
@@ -125,9 +128,29 @@ Sets an upper limit of the bitrate in bps.
 \fBMaxFrameRate\fR = \fI<float>\fR
 Sets the maximum frame rate that the encoder will process per second.
 
+.SH "AV1"
+
+\fB[AV1]\fR section defines encoding parameters for the AV1 encoder
+(libaom), used when "AV1" is in the codec order and the client offers it.
+The section is optional; missing parameters take their default values.
+
+.TP
+\fBthreads = \fI<integer>\fR
+Specify how many CPU threads to use for AV1 encoding per screen, from 1 to
+64. Defaults to \fB2\fR. The rows of a frame are encoded in parallel, so
+more threads help large screens most. As with x264, every user and screen
+gets its own encoder: 3 users with dual screens may use up to
+<threads> * 3 * 2 threads for AV1 encoding.
+
+The environment variable \fBXRDP_GFX_AV1_THREADS\fR, if set to a valid
+value, overrides this for every connection type. \fBxrdp\fR(8) reads it
+when it starts, so set it in the environment of the xrdp service (for
+example in \fI/etc/default/xrdp\fR) and restart the service. The file is
+read again for each new connection.
+
 .SH "CONNECTION TYPES"
 
-\fB[x264]\fR and \fB[OpenH264]\fR section are tables (also known as
+\fB[x264]\fR, \fB[OpenH264]\fR and \fB[AV1]\fR section are tables (also known as
 dictionaries) that have subtables with connection types in their keys.
 For example, \fB[x264.lan]\fR, \fB[OpenH264.wan]\fR.
 
