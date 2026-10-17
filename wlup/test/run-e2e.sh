@@ -451,7 +451,7 @@ if [ "$AV1_RAN" = 1 ]; then
          [ "$(convert "$OUT/client-av1-build-h264.png" -format %k info:)" -gt 50 ]'
     check "av1: i420 gets AV1 in 4:2:0" \
         'echo "$AV1_I420_LOG" | grep -q "Matched AV1 mode" &&
-         echo "$AV1_I420_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0)" &&
+         echo "$AV1_I420_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0, 2 threads)" &&
          ! echo "$AV1_I420_LOG" | grep -q "AV1 in 4:4:4"'
     check "av1: the AV1 client gets AV1" \
         'echo "$AV1_LOG" | grep -q "Matched AV1 mode" &&
@@ -460,7 +460,7 @@ if [ "$AV1_RAN" = 1 ]; then
     check "av1: i444 gets 4:4:4 from wlup to the encoder" \
         'echo "$AV1_LOG" | grep -q "AV1 in 4:4:4: frames come as yuv444" &&
          echo "$AV1_LOG" | grep -q "wlup: frames go to the GFX encoder, as yuv444" &&
-         echo "$AV1_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:4:4)"'
+         echo "$AV1_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:4:4, 2 threads)"'
     check "av1: no frame dropped by the encoder" \
         '! echo "$AV1_LOG" | grep -q "dropped"'
     check "av1: the client decodes without errors" \

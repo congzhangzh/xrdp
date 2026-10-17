@@ -87,3 +87,10 @@ EnableFrameSkip = true
 TargetBitrate =   600_000
 MaxBitrate =    1_200_000
 
+# Configurations for AV1 (libaom), used when "AV1" is in the codec order.
+# The section is optional; connection types inherit [AV1.default] as above.
+[AV1.default]
+# CPU threads per screen for AV1 encoding, 1 to 64. More threads encode
+# large screens faster, but each user and screen gets that many.
+# XRDP_GFX_AV1_THREADS in xrdp's environment overrides this.
+threads = 2

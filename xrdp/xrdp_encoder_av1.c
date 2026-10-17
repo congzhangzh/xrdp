@@ -48,6 +48,7 @@
 #include "arch.h"
 #include "os_calls.h"
 #include "xrdp_encoder_av1.h"
+#include "xrdp_tconfig.h"
 
 /* One per monitor, as the H.264 encoders: the session argument */
 #define AV1_MAX_ENCODERS 16
@@ -58,9 +59,6 @@
 
 /* libaom's fastest real-time speed */
 #define AV1_CPU_USED 10
-
-/* Threads per encoder: rows are encoded in parallel (row-mt) */
-#define AV1_THREADS 2
 
 /* The frame rate the encoder plans its rate control for */
 #define AV1_FPS 60
@@ -82,14 +80,27 @@ struct av1_encoder
 struct av1_global
 {
     struct av1_encoder encoders[AV1_MAX_ENCODERS];
+    /* from gfx.toml, for each connection type */
+    struct xrdp_tconfig_gfx_av1_param av1_param[NUM_CONNECTION_TYPES];
 };
 
 /*****************************************************************************/
 void *
 xrdp_encoder_av1_create(void)
 {
+    struct av1_global *ag;
+    struct xrdp_tconfig_gfx gfxconfig;
+
     LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_encoder_av1_create:");
-    return g_new0(struct av1_global, 1);
+    ag = g_new0(struct av1_global, 1);
+    if (ag == NULL)
+    {
+        return NULL;
+    }
+    /* the AV1 parameters keep their defaults if this fails */
+    tconfig_load_gfx(GFX_CONF, &gfxconfig);
+    memcpy(ag->av1_param, gfxconfig.av1_param, sizeof(ag->av1_param));
+    return ag;
 }
 
 /*****************************************************************************/
@@ -134,7 +145,8 @@ xrdp_encoder_av1_delete(void *handle)
 
 /* Opens an encoder for width x height. Returns 0 on success */
 static int
-av1_open(struct av1_encoder *ae, int width, int height, int yuv444)
+av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
+         int threads)
 {
     aom_codec_iface_t *iface = aom_codec_av1_cx();
     aom_codec_enc_cfg_t cfg;
@@ -158,7 +170,7 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444)
     cfg.g_profile = yuv444 ? 1 : 0; /* 4:4:4 needs profile 1 */
     cfg.g_timebase.num = 1;
     cfg.g_timebase.den = AV1_FPS;
-    cfg.g_threads = AV1_THREADS;
+    cfg.g_threads = threads;    /* rows in parallel (row-mt) */
     cfg.g_lag_in_frames = 0;    /* a frame out for each frame in */
     cfg.rc_end_usage = AOM_Q;   /* constant quality, AV1_CQ_LEVEL */
     cfg.kf_mode = AOM_KF_DISABLED;
@@ -197,8 +209,8 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444)
     ae->height = height;
     ae->pts = 0;
     LOG(LOG_LEVEL_INFO, "xrdp_encoder_av1: encoder for %dx%d (picture %dx%d, "
-        "%s)", width, height, ae->pic_width, ae->pic_height,
-        yuv444 ? "4:4:4" : "4:2:0");
+        "%s, %d thread%s)", width, height, ae->pic_width, ae->pic_height,
+        yuv444 ? "4:4:4" : "4:2:0", threads, threads == 1 ? "" : "s");
     return 0;
 }
 
@@ -304,6 +316,13 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
     int out_bytes = 0;
     int index;
     int yuv444 = format == XRDP_yuv444_709fr;
+    int ct = connection_type;
+
+    /* as xrdp_encoder_x264_encode() */
+    if (ct > CONNECTION_TYPE_LAN || ct < CONNECTION_TYPE_MODEM)
+    {
+        ct = CONNECTION_TYPE_LAN;
+    }
 
     if (!ae->open || ae->width != width || ae->height != height ||
             ae->yuv444 != yuv444)
@@ -317,7 +336,8 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
         {
             return 1;
         }
-        if (av1_open(ae, width, height, yuv444) != 0)
+        if (av1_open(ae, width, height, yuv444,
+                     ag->av1_param[ct].threads) != 0)
         {
             return 2;
         }

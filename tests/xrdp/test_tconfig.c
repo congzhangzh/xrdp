@@ -2,6 +2,8 @@
 #include "config_ac.h"
 #endif
 
+#include <stdlib.h>
+
 #include "xrdp_tconfig.h"
 #include "test_xrdp.h"
 #include "xrdp.h"
@@ -80,6 +82,57 @@ START_TEST(test_tconfig_gfx_x264_load_basic)
     ck_assert_int_eq(gfxconfig.x264_param[0].fps_num, 60);
     ck_assert_int_eq(gfxconfig.x264_param[0].fps_den, 1);
 
+}
+END_TEST
+
+START_TEST(test_tconfig_gfx_av1_threads)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+
+    /* No [AV1] section: 2 threads everywhere */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_av1_preferred.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[0].threads, 2);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 2);
+
+    /* default, inherited, overridden, invalid */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_threads.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[0].threads, 4);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 4);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_WAN].threads, 1);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_MODEM].threads, 2);
+
+    /* Missing file: still the defaults */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/no_such_file.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 2);
+}
+END_TEST
+
+START_TEST(test_tconfig_gfx_av1_threads_env)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+
+    /* The environment overrides the file for every connection type */
+    g_setenv("XRDP_GFX_AV1_THREADS", "3", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_threads.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[0].threads, 3);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 3);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_WAN].threads, 3);
+
+    /* ... and the defaults when there is no file */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/no_such_file.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 3);
+
+    /* An invalid value is ignored: the file decides */
+    g_setenv("XRDP_GFX_AV1_THREADS", "0", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_threads.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 4);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_WAN].threads, 1);
+
+    g_setenv("XRDP_GFX_AV1_THREADS", "65", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_threads.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 4);
+
+    unsetenv("XRDP_GFX_AV1_THREADS");
 }
 END_TEST
 
@@ -170,6 +223,8 @@ make_suite_tconfig_load_gfx(void)
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_always_success);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_x264_load_basic);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_codec_order);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_threads);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_threads_env);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_missing_file);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_missing_h264);
 
