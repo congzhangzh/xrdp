@@ -1,0 +1,23 @@
+[codec]
+order = [ "AV1", "H.264", "RFX" ]
+
+[x264.default]
+preset = "ultrafast"
+tune = "zerolatency"
+profile = "main"
+vbv_max_bitrate = 0
+vbv_buffer_size = 0
+fps_num = 24
+fps_den = 1
+threads = 1
+
+[AV1.default]
+cpu_used = 11
+cq_level = 30
+
+[AV1.wan]
+target_bitrate = 15_000
+
+[AV1.modem]
+cpu_used = 4         # invalid: the default value is used
+cq_level = 64        # invalid: the default value is used

@@ -131,8 +131,18 @@ Sets the maximum frame rate that the encoder will process per second.
 .SH "AV1"
 
 \fB[AV1]\fR section defines encoding parameters for the AV1 encoder
-(libaom), used when "AV1" is in the codec order and the client offers it.
-The section is optional; missing parameters take their default values.
+(libaom in its real-time mode), used when "AV1" is in the codec order and
+the client offers it. The section is optional; missing parameters take
+their default values. An invalid value is logged and the default is used.
+
+Every parameter can also be set in the environment of the xrdp service as
+\fBXRDP_GFX_AV1_\fR followed by its name in capitals (for example
+\fBXRDP_GFX_AV1_THREADS\fR or \fBXRDP_GFX_AV1_TARGET_BITRATE\fR). A valid
+value there overrides \fBgfx.toml\fR for every connection type; an invalid
+one is logged and ignored. \fBxrdp\fR(8) reads the environment when it
+starts, so set it in the environment of the xrdp service (for example in
+\fI/etc/default/xrdp\fR) and restart the service. The file is read again
+for each new connection.
 
 .TP
 \fBthreads = \fI<integer>\fR
@@ -142,11 +152,26 @@ more threads help large screens most. As with x264, every user and screen
 gets its own encoder: 3 users with dual screens may use up to
 <threads> * 3 * 2 threads for AV1 encoding.
 
-The environment variable \fBXRDP_GFX_AV1_THREADS\fR, if set to a valid
-value, overrides this for every connection type. \fBxrdp\fR(8) reads it
-when it starts, so set it in the environment of the xrdp service (for
-example in \fI/etc/default/xrdp\fR) and restart the service. The file is
-read again for each new connection.
+.TP
+\fBcpu_used\fR = \fI<integer>\fR
+Encoder speed, from \fB5\fR (slower) to \fB12\fR (fastest). Defaults to
+\fB10\fR. \fB8\fR makes frames about 10% smaller and takes about 1.6
+times as long to encode them. In libaom 3.14, lower values only take longer,
+and 11 and 12 make the same frames as 10.
+
+.TP
+\fBcq_level\fR = \fI<integer>\fR
+Constant quality, from \fB0\fR (best) to \fB63\fR, used when
+\fBtarget_bitrate\fR is 0. Defaults to \fB28\fR. Frames take as many bits
+as that quality needs, so scrolling and video may burst well above what a
+slow link carries: set \fBtarget_bitrate\fR for such links.
+
+.TP
+\fBtarget_bitrate\fR = \fI<integer>\fR
+A bitrate in kbps for the encoder to keep to on average (constant
+bitrate), or \fB0\fR (the default) for constant quality. Single seconds
+can take 1.4 to 2 times the target, more when the screen was idle before,
+so set about 0.7 of what the link carries.
 
 .SH "CONNECTION TYPES"
 
