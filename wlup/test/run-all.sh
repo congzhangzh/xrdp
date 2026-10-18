@@ -3,8 +3,7 @@
 # parallel, each in its own container:
 #
 #   sway-no-systemd  sway in a plain container (no init system, no
-#                    logind, no PipeWire), with /dev/fuse for the drive test;
-#                    its image also has a FreeRDP with AV1, for the AV1 tests
+#                    logind, no PipeWire), with /dev/fuse for the drive test
 #   sway-systemd     sway with systemd as PID 1: real PAM -> logind
 #                    session, microphone
 #   gnome-systemd    headless GNOME through the Mutter backend, with
@@ -12,6 +11,12 @@
 #
 # Usage: wlup/test/run-all.sh [-n] [output dir]
 #   -n  do not rebuild the images
+#
+# Every suite connects with the FreeRDP of wlup/test/freerdp-av1: by
+# default the upstream commit it pins, or with
+#   FREERDP_SRC=<FreeRDP git checkout> [FREERDP_REF=<ref>, default HEAD]
+# that commit of the checkout (taken with git archive, so it need not be
+# pushed). Debian's client is kept for the check of a client without AV1.
 #
 # Exit status: 0 if every suite ran and passed, 1 otherwise. Logs and
 # screenshots of each suite are kept in <output dir>/<suite>/.
@@ -29,6 +34,23 @@ OUT=${1:-$(mktemp -d /tmp/wlup-test.XXXXXX)}
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 TAG=wlup-test-$$
+CLIENT_ENV=(-e XFREERDP=/opt/freerdp-av1/bin/xfreerdp)
+
+# The FreeRDP tree for the client image, if not the pinned one
+FREERDP_ARGS=()
+if [ -n "${FREERDP_SRC:-}" ]; then
+    if [ $BUILD = 0 ]; then
+        echo "FREERDP_SRC needs the images rebuilt: drop -n"
+        exit 1
+    fi
+    FREERDP_SHA=$(git -C "$FREERDP_SRC" rev-parse --verify "${FREERDP_REF:-HEAD}^{commit}") ||
+        exit 1
+    rm -rf "$OUT/freerdp-src"
+    mkdir -p "$OUT/freerdp-src"
+    git -C "$FREERDP_SRC" archive "$FREERDP_SHA" | tar -x -C "$OUT/freerdp-src" || exit 1
+    FREERDP_ARGS=(--build-context "freerdp_src=$OUT/freerdp-src"
+                  --build-arg "FREERDP_COMMIT=$FREERDP_SHA")
+fi
 
 # --- images (each one is built on the previous) -------------------------------
 if [ $BUILD = 1 ]; then
@@ -38,13 +60,18 @@ if [ $BUILD = 1 ]; then
                "xrdp-wlup-gnome $TEST_DIR/gnome" \
                "xrdp-wlup-mutter $TEST_DIR/mutter"; do
         set -- $img
+        args=()
+        [ "$1" = xrdp-wlup-freerdp-av1 ] && args=("${FREERDP_ARGS[@]}")
         echo "building $1"
-        if ! docker build -q -t "$1" "$2" > "$OUT/build-$1.log" 2>&1; then
+        if ! docker build -q "${args[@]}" -t "$1" "$2" > "$OUT/build-$1.log" 2>&1; then
             echo "FAILED to build $1, see $OUT/build-$1.log"
             exit 1
         fi
     done
+    rm -rf "$OUT/freerdp-src"
 fi
+echo "client: FreeRDP $(docker run --rm xrdp-wlup-freerdp-av1 cat /opt/freerdp-av1/SOURCE_COMMIT)" \
+    "${FREERDP_SRC:+(${FREERDP_REF:-HEAD} of $FREERDP_SRC)}" | tee "$OUT/client.txt"
 
 cleanup() {
     docker rm -f "$TAG-sway-systemd" "$TAG-gnome-systemd" > /dev/null 2>&1
@@ -59,7 +86,7 @@ run_systemd() {
         -v "$SRC":/src:ro -v "$OUT/$1":/out "$2" /usr/lib/systemd/systemd \
         > /dev/null &&
     sleep 5 &&
-    docker exec "$TAG-$1" bash -c \
+    docker exec "${CLIENT_ENV[@]}" "$TAG-$1" bash -c \
         "bash $3 /src /out > /out/run.log 2>&1; chmod -R a+r /out"
     docker rm -f "$TAG-$1" > /dev/null 2>&1
 }
@@ -68,7 +95,7 @@ mkdir -p "$OUT/sway-no-systemd" "$OUT/sway-systemd" "$OUT/gnome-systemd"
 echo "running the suites in parallel, output in $OUT"
 
 docker run --rm --device /dev/fuse --cap-add SYS_ADMIN \
-    --security-opt apparmor:unconfined \
+    --security-opt apparmor:unconfined "${CLIENT_ENV[@]}" \
     -v "$SRC":/src:ro -v "$OUT/sway-no-systemd":/out xrdp-wlup-freerdp-av1 \
     bash -c 'bash /src/wlup/test/run-e2e.sh /src /out > /out/run.log 2>&1;
              chmod -R a+r /out' &
