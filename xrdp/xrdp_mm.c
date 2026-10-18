@@ -424,25 +424,61 @@ xrdp_mm_get_session_fds(struct xrdp_mm *self)
 /*****************************************************************************/
 /* AV1 in 4:4:4 needs frames with the full colour resolution
  * (XRDP_yuv444_709fr), which only wlup sends: Wayland and GNOME sessions.
- * The client offers it before the user logs in, so this runs again once
- * the session type is known, before the module gets the client info */
+ * The client offers it before the user logs in, so this runs once the
+ * session type is known, before the module gets the client info.
+ * [AV1] chroma in gfx.toml: "auto" (4:4:4 when possible), "420" or "444"
+ * (4:4:4, with a warning when it is not possible) */
 static void
 xrdp_mm_update_av1_444(struct xrdp_mm *self)
 {
     struct xrdp_client_info *ci = self->wm->client_info;
+    enum xrdp_tconfig_av1_chroma chroma;
+    const char *why_420;
+    int ct = ci->mcs_connection_type;
 
-    if ((self->egfx_flags & XRDP_EGFX_AV1) != 0 &&
-            self->av1_444_allowed &&
-            (self->code == WAYLAND_SESSION_CODE ||
-             self->code == GNOME_SESSION_CODE) &&
-            (self->egfx_flags & XRDP_EGFX_AV1_444) == 0)
+    if ((self->egfx_flags & XRDP_EGFX_AV1) == 0 ||
+            (self->egfx_flags & XRDP_EGFX_AV1_444) != 0)
     {
-        LOG(LOG_LEVEL_INFO, "AV1 in 4:4:4: frames come as yuv444");
-        /* (a cast: the code is also built as C++) */
-        self->egfx_flags = (enum xrdp_egfx_flags)
-                           (self->egfx_flags | XRDP_EGFX_AV1_444);
-        ci->capture_format = XRDP_yuv444_709fr;
+        return;
     }
+    /* as xrdp_encoder_av1_encode(): autodetect and others are LAN */
+    if (ct > CONNECTION_TYPE_LAN || ct < CONNECTION_TYPE_MODEM)
+    {
+        ct = CONNECTION_TYPE_LAN;
+    }
+    chroma = self->wm->gfx_config->av1_param[ct].chroma;
+
+    if (chroma == XTC_AV1_CHROMA_420)
+    {
+        why_420 = "gfx.toml asks for it";
+    }
+    else if (!self->av1_444_allowed)
+    {
+        why_420 = "the client does not offer AV1 4:4:4";
+    }
+    else if (self->code != WAYLAND_SESSION_CODE &&
+             self->code != GNOME_SESSION_CODE)
+    {
+        why_420 = "only Wayland and GNOME sessions send full colour";
+    }
+    else
+    {
+        why_420 = NULL;
+    }
+
+    if (why_420 != NULL)
+    {
+        LOG(chroma == XTC_AV1_CHROMA_444 ? LOG_LEVEL_WARNING : LOG_LEVEL_INFO,
+            "AV1 in 4:2:0 (profile 0, chroma = \"%s\"): %s",
+            tconfig_av1_chroma_to_str(chroma), why_420);
+        return;
+    }
+    LOG(LOG_LEVEL_INFO, "AV1 in 4:4:4 (profile 1, chroma = \"%s\"): frames "
+        "come as yuv444", tconfig_av1_chroma_to_str(chroma));
+    /* (a cast: the code is also built as C++) */
+    self->egfx_flags = (enum xrdp_egfx_flags)
+                       (self->egfx_flags | XRDP_EGFX_AV1_444);
+    ci->capture_format = XRDP_yuv444_709fr;
 }
 
 /*****************************************************************************/

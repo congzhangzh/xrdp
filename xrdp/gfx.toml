@@ -103,6 +103,11 @@ cq_level = 28
 # A bitrate in kbps, or 0 for constant quality. A single second can take
 # 1.4 to 2 times the target: set about 0.7 of what the link carries
 target_bitrate = 0
+# Chroma subsampling: "auto" encodes 4:4:4 (AV1 profile 1) when the client
+# offers it and the session sends full colour (Wayland, GNOME), else
+# 4:2:0 (profile 0); "420" always 4:2:0, for clients that decode in
+# hardware; "444" as "auto", with a warning when 4:4:4 is not possible
+chroma = "auto"
 
 [AV1.broadband_low]
 cpu_used = 8

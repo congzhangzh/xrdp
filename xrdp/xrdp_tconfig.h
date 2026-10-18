@@ -53,12 +53,22 @@ struct xrdp_tconfig_gfx_openh264_param
     float MaxFrameRate;
 };
 
+/* Chroma subsampling of AV1: profile 0 is 4:2:0, profile 1 is 4:4:4.
+ * (4:2:2 is AV1 profile 2, which FreeRDP's extension cannot offer) */
+enum xrdp_tconfig_av1_chroma
+{
+    XTC_AV1_CHROMA_AUTO, /* 4:4:4 when the client and the session allow it */
+    XTC_AV1_CHROMA_420,
+    XTC_AV1_CHROMA_444
+};
+
 struct xrdp_tconfig_gfx_av1_param
 {
     int threads;
     int cpu_used;       /* real-time speed, 5 (slower, smaller) to 12 */
     int cq_level;       /* constant quality, 0 (best) to 63 */
     int target_bitrate; /* kbps; 0 for constant quality (cq_level) */
+    enum xrdp_tconfig_av1_chroma chroma;
 };
 
 enum xrdp_tconfig_codecs
@@ -118,6 +128,15 @@ tconfig_codec_order_to_str(
     const struct xrdp_tconfig_gfx_codec_order *codec_order,
     char *buff,
     unsigned int bufflen);
+
+/**
+ * Name of an AV1 chroma setting, as gfx.toml spells it
+ *
+ * @param chroma Chroma setting
+ * @return "auto", "420" or "444"
+ */
+const char *
+tconfig_av1_chroma_to_str(enum xrdp_tconfig_av1_chroma chroma);
 
 /**
  * Loads the GFX config from the specified file

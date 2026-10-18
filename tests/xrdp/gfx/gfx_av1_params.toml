@@ -14,10 +14,15 @@ threads = 1
 [AV1.default]
 cpu_used = 11
 cq_level = 30
+chroma = "420"
 
 [AV1.wan]
 target_bitrate = 15_000
 
+[AV1.broadband_low]
+chroma = 444         # a number works too
+
 [AV1.modem]
 cpu_used = 4         # invalid: the default value is used
 cq_level = 64        # invalid: the default value is used
+chroma = "422"       # invalid: the default value is used

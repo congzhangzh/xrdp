@@ -137,7 +137,7 @@ their default values. An invalid value is logged and the default is used.
 
 Every parameter can also be set in the environment of the xrdp service as
 \fBXRDP_GFX_AV1_\fR followed by its name in capitals (for example
-\fBXRDP_GFX_AV1_THREADS\fR or \fBXRDP_GFX_AV1_TARGET_BITRATE\fR). A valid
+\fBXRDP_GFX_AV1_THREADS\fR or \fBXRDP_GFX_AV1_CHROMA\fR). A valid
 value there overrides \fBgfx.toml\fR for every connection type; an invalid
 one is logged and ignored. \fBxrdp\fR(8) reads the environment when it
 starts, so set it in the environment of the xrdp service (for example in
@@ -172,6 +172,18 @@ A bitrate in kbps for the encoder to keep to on average (constant
 bitrate), or \fB0\fR (the default) for constant quality. Single seconds
 can take 1.4 to 2 times the target, more when the screen was idle before,
 so set about 0.7 of what the link carries.
+
+.TP
+\fBchroma\fR = \fI<string>\fR
+The chroma subsampling. \fBauto\fR (the default) encodes 4:4:4 (AV1
+profile 1, full colour resolution, sharper coloured text) when the client
+offers it and the session sends full colour (Wayland and GNOME sessions),
+and 4:2:0 (profile 0) otherwise. \fB420\fR always encodes 4:2:0, for
+clients that decode AV1 in hardware, which usually supports profile 0
+only. \fB444\fR is \fBauto\fR, with a warning in the log when 4:4:4 is not
+possible. xrdp logs which one it chose, and why, when the session starts.
+4:2:2 is not available: it is AV1 profile 2, which FreeRDP's extension
+cannot offer.
 
 .SH "CONNECTION TYPES"
 
