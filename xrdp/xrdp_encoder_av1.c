@@ -60,8 +60,14 @@
 /* libaom's fastest real-time speed */
 #define AV1_CPU_USED 10
 
-/* The frame rate the encoder plans its rate control for */
-#define AV1_FPS 60
+/* Timestamps are in milliseconds. xrdp encodes when the screen changes,
+ * so frames come at any rate: each one lasts from the previous one to
+ * now, which is what libaom's rate control plans with */
+#define AV1_TIMEBASE_DEN 1000
+/* The first frame has no previous one: as if at 60 frames a second */
+#define AV1_FIRST_DURATION_MS 16
+/* After an idle screen, a frame counts as 1 s at most */
+#define AV1_MAX_DURATION_MS 1000
 
 struct av1_encoder
 {
@@ -74,7 +80,8 @@ struct av1_encoder
     int height;
     int pic_width;      /* rounded up to even, for 4:2:0 */
     int pic_height;
-    int64_t pts;
+    int64_t pts;            /* the frames' durations so far, in ms */
+    unsigned int last_ms;   /* g_get_elapsed_ms() at the previous frame */
 };
 
 struct av1_global
@@ -169,7 +176,7 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     cfg.g_h = ae->pic_height;
     cfg.g_profile = yuv444 ? 1 : 0; /* 4:4:4 needs profile 1 */
     cfg.g_timebase.num = 1;
-    cfg.g_timebase.den = AV1_FPS;
+    cfg.g_timebase.den = AV1_TIMEBASE_DEN;
     cfg.g_threads = threads;    /* rows in parallel (row-mt) */
     cfg.g_lag_in_frames = 0;    /* a frame out for each frame in */
     cfg.rc_end_usage = AOM_Q;   /* constant quality, AV1_CQ_LEVEL */
@@ -208,6 +215,7 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     ae->width = width;
     ae->height = height;
     ae->pts = 0;
+    ae->last_ms = g_get_elapsed_ms();
     LOG(LOG_LEVEL_INFO, "xrdp_encoder_av1: encoder for %dx%d (picture %dx%d, "
         "%s, %d thread%s)", width, height, ae->pic_width, ae->pic_height,
         yuv444 ? "4:4:4" : "4:2:0", threads, threads == 1 ? "" : "s");
@@ -317,6 +325,8 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
     int index;
     int yuv444 = format == XRDP_yuv444_709fr;
     int ct = connection_type;
+    unsigned int now_ms;
+    unsigned int duration;
 
     /* as xrdp_encoder_x264_encode() */
     if (ct > CONNECTION_TYPE_LAN || ct < CONNECTION_TYPE_MODEM)
@@ -360,7 +370,18 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
                                crects[index * 4 + 2], crects[index * 4 + 3]);
             }
         }
-        err = aom_codec_encode(&ae->ctx, &ae->image, ae->pts++, 1, 0);
+        now_ms = g_get_elapsed_ms();
+        if (flags & 1)
+        {
+            duration = AV1_FIRST_DURATION_MS;
+        }
+        else
+        {
+            duration = MAX(1, MIN(now_ms - ae->last_ms, AV1_MAX_DURATION_MS));
+            ae->pts += duration;
+        }
+        ae->last_ms = now_ms;
+        err = aom_codec_encode(&ae->ctx, &ae->image, ae->pts, duration, 0);
         if (err != AOM_CODEC_OK)
         {
             LOG(LOG_LEVEL_ERROR, "xrdp_encoder_av1: aom_codec_encode: %s",
