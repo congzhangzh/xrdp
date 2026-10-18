@@ -14,7 +14,7 @@ h264_encoder = "x264"
 #
 [x264.default]
 # NOTE: x264 specifies bitrate in unit of kbps.
-preset = "ultrafast"
+preset = "superfast"
 tune = "zerolatency"
 profile = "main"     # profile is forced to baseline if preset == ultrafast
 vbv_max_bitrate = 0
