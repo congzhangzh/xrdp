@@ -146,7 +146,7 @@ order = [ "H.264", "RFX" ]
 h264_encoder = "x264"
 
 [x264.default]
-preset = "ultrafast"
+preset = "superfast"
 tune = "zerolatency"
 profile = "main"     # profile is forced to baseline if preset == ultrafast
 vbv_max_bitrate = 0

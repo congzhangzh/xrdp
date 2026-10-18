@@ -42,7 +42,7 @@
 
 #define TCLOG(log_level, args...) LOG(log_level, "TConfig: " args)
 
-#define X264_DEFAULT_PRESET  "ultrafast"
+#define X264_DEFAULT_PRESET  "superfast"
 #define X264_DEFAULT_TUNE    "zerolatency"
 #define X264_DEFAULT_PROFILE "main"
 #define X264_DEFAULT_FPS_NUM 24
