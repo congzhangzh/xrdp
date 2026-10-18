@@ -53,13 +53,6 @@
 /* One per monitor, as the H.264 encoders: the session argument */
 #define AV1_MAX_ENCODERS 16
 
-/* Quality, 0 (best) to 63. gnome-remote-desktop chose 28 to give text
- * about the quality of its H.264 at QP 22 */
-#define AV1_CQ_LEVEL 28
-
-/* libaom's fastest real-time speed */
-#define AV1_CPU_USED 10
-
 /* Timestamps are in milliseconds. xrdp encodes when the screen changes,
  * so frames come at any rate: each one lasts from the previous one to
  * now, which is what libaom's rate control plans with */
@@ -153,13 +146,14 @@ xrdp_encoder_av1_delete(void *handle)
 /* Opens an encoder for width x height. Returns 0 on success */
 static int
 av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
-         int threads)
+         const struct xrdp_tconfig_gfx_av1_param *param)
 {
     aom_codec_iface_t *iface = aom_codec_av1_cx();
     aom_codec_enc_cfg_t cfg;
     size_t y_bytes;
     size_t uv_bytes;
     aom_codec_err_t err;
+    char rc[32];
 
     /* even for 4:2:0; the client crops what is beyond the surface */
     ae->pic_width = (width + 1) & ~1;
@@ -177,9 +171,18 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     cfg.g_profile = yuv444 ? 1 : 0; /* 4:4:4 needs profile 1 */
     cfg.g_timebase.num = 1;
     cfg.g_timebase.den = AV1_TIMEBASE_DEN;
-    cfg.g_threads = threads;    /* rows in parallel (row-mt) */
+    cfg.g_threads = param->threads; /* rows in parallel (row-mt) */
     cfg.g_lag_in_frames = 0;    /* a frame out for each frame in */
-    cfg.rc_end_usage = AOM_Q;   /* constant quality, AV1_CQ_LEVEL */
+    if (param->target_bitrate > 0)
+    {
+        /* libaom's real-time CBR, with its default 1 s buffer */
+        cfg.rc_end_usage = AOM_CBR;
+        cfg.rc_target_bitrate = param->target_bitrate;
+    }
+    else
+    {
+        cfg.rc_end_usage = AOM_Q; /* constant quality, cq_level */
+    }
     cfg.kf_mode = AOM_KF_DISABLED;
     err = aom_codec_enc_init(&ae->ctx, iface, &cfg, 0);
     if (err != AOM_CODEC_OK)
@@ -189,8 +192,11 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
         return 1;
     }
     ae->open = 1;
-    AV1_CONTROL(&ae->ctx, AOME_SET_CPUUSED, AV1_CPU_USED);
-    AV1_CONTROL(&ae->ctx, AOME_SET_CQ_LEVEL, AV1_CQ_LEVEL);
+    AV1_CONTROL(&ae->ctx, AOME_SET_CPUUSED, param->cpu_used);
+    if (param->target_bitrate <= 0)
+    {
+        AV1_CONTROL(&ae->ctx, AOME_SET_CQ_LEVEL, param->cq_level);
+    }
     AV1_CONTROL(&ae->ctx, AV1E_SET_TUNE_CONTENT, AOM_CONTENT_SCREEN);
     AV1_CONTROL(&ae->ctx, AV1E_SET_ROW_MT, 1);
     AV1_CONTROL(&ae->ctx, AV1E_SET_COLOR_RANGE, AOM_CR_FULL_RANGE);
@@ -216,9 +222,18 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     ae->height = height;
     ae->pts = 0;
     ae->last_ms = g_get_elapsed_ms();
+    if (param->target_bitrate > 0)
+    {
+        g_snprintf(rc, sizeof(rc), "CBR %d kbps", param->target_bitrate);
+    }
+    else
+    {
+        g_snprintf(rc, sizeof(rc), "cq-level %d", param->cq_level);
+    }
     LOG(LOG_LEVEL_INFO, "xrdp_encoder_av1: encoder for %dx%d (picture %dx%d, "
-        "%s, %d thread%s)", width, height, ae->pic_width, ae->pic_height,
-        yuv444 ? "4:4:4" : "4:2:0", threads, threads == 1 ? "" : "s");
+        "%s, cpu-used %d, %s, %d thread%s)", width, height, ae->pic_width,
+        ae->pic_height, yuv444 ? "4:4:4" : "4:2:0", param->cpu_used, rc,
+        param->threads, param->threads == 1 ? "" : "s");
     return 0;
 }
 
@@ -346,8 +361,7 @@ xrdp_encoder_av1_encode(void *handle, int session, int left, int top,
         {
             return 1;
         }
-        if (av1_open(ae, width, height, yuv444,
-                     ag->av1_param[ct].threads) != 0)
+        if (av1_open(ae, width, height, yuv444, &ag->av1_param[ct]) != 0)
         {
             return 2;
         }

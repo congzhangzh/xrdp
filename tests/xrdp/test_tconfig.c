@@ -136,6 +136,62 @@ START_TEST(test_tconfig_gfx_av1_threads_env)
 }
 END_TEST
 
+START_TEST(test_tconfig_gfx_av1_params)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+    const struct xrdp_tconfig_gfx_av1_param *p;
+
+    /* No [AV1] section: the defaults everywhere */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_av1_preferred.toml", &gfxconfig);
+    p = &gfxconfig.av1_param[CONNECTION_TYPE_LAN];
+    ck_assert_int_eq(p->cpu_used, 10);
+    ck_assert_int_eq(p->cq_level, 28);
+    ck_assert_int_eq(p->target_bitrate, 0);
+
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
+
+    /* [AV1.default], inherited by LAN */
+    p = &gfxconfig.av1_param[CONNECTION_TYPE_LAN];
+    ck_assert_int_eq(p->cpu_used, 11);
+    ck_assert_int_eq(p->cq_level, 30);
+    ck_assert_int_eq(p->target_bitrate, 0);
+
+    /* WAN: a bitrate, on top of the default section */
+    p = &gfxconfig.av1_param[CONNECTION_TYPE_WAN];
+    ck_assert_int_eq(p->target_bitrate, 15000);
+    ck_assert_int_eq(p->cpu_used, 11);
+
+    /* modem: invalid values take the defaults */
+    p = &gfxconfig.av1_param[CONNECTION_TYPE_MODEM];
+    ck_assert_int_eq(p->cpu_used, 10);
+    ck_assert_int_eq(p->cq_level, 28);
+}
+END_TEST
+
+START_TEST(test_tconfig_gfx_av1_params_env)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+
+    /* XRDP_GFX_AV1_<NAME> overrides the file for every connection type */
+    g_setenv("XRDP_GFX_AV1_CPU_USED", "12", 1);
+    g_setenv("XRDP_GFX_AV1_TARGET_BITRATE", "3000", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        ck_assert_int_eq(gfxconfig.av1_param[ct].cpu_used, 12);
+        ck_assert_int_eq(gfxconfig.av1_param[ct].target_bitrate, 3000);
+    }
+
+    /* An invalid value is ignored: the file decides */
+    g_setenv("XRDP_GFX_AV1_CPU_USED", "13", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].cpu_used, 11);
+
+    unsetenv("XRDP_GFX_AV1_CPU_USED");
+    unsetenv("XRDP_GFX_AV1_TARGET_BITRATE");
+}
+END_TEST
+
 START_TEST(test_tconfig_gfx_codec_order)
 {
     struct xrdp_tconfig_gfx gfxconfig;
@@ -225,6 +281,8 @@ make_suite_tconfig_load_gfx(void)
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_codec_order);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_threads);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_threads_env);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_params);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_params_env);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_missing_file);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_missing_h264);
 

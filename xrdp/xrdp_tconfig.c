@@ -28,6 +28,7 @@
 #include <config_ac.h>
 #endif
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,56 @@
 
 #define AV1_DEFAULT_THREADS 2 /* rows are encoded in parallel (row-mt) */
 #define AV1_MAX_THREADS 64 /* libaom refuses more */
+/* libaom's fastest real-time speed when xrdp's AV1 was written. 8 makes
+ * about 10% smaller frames, at 1.6 times the encoding time */
+#define AV1_DEFAULT_CPU_USED 10
+/* gnome-remote-desktop's choice: text about as sharp as its H.264 at
+ * QP 22 */
+#define AV1_DEFAULT_CQ_LEVEL 28
+
+/* The parameters of [AV1.<connection type>]: the key, the environment
+ * variable that overrides it for every connection type, the valid range
+ * and the default */
+struct av1_param_def
+{
+    const char *key;
+    const char *env;
+    size_t offset;
+    int min;
+    int max;
+    int def;
+};
+
+#define AV1_PARAM_OFFSET(member) \
+    offsetof(struct xrdp_tconfig_gfx_av1_param, member)
+
+static const struct av1_param_def av1_params[] =
+{
+    {
+        "threads", "XRDP_GFX_AV1_THREADS", AV1_PARAM_OFFSET(threads),
+        1, AV1_MAX_THREADS, AV1_DEFAULT_THREADS
+    },
+    {
+        "cpu_used", "XRDP_GFX_AV1_CPU_USED", AV1_PARAM_OFFSET(cpu_used),
+        5, 12, AV1_DEFAULT_CPU_USED
+    },
+    {
+        "cq_level", "XRDP_GFX_AV1_CQ_LEVEL", AV1_PARAM_OFFSET(cq_level),
+        0, 63, AV1_DEFAULT_CQ_LEVEL
+    },
+    {
+        "target_bitrate", "XRDP_GFX_AV1_TARGET_BITRATE",
+        AV1_PARAM_OFFSET(target_bitrate), 0, 1000000, 0
+    }
+};
+
+#define AV1_PARAM_COUNT (sizeof(av1_params) / sizeof(av1_params[0]))
+
+static int *
+av1_param_ptr(struct xrdp_tconfig_gfx_av1_param *param, unsigned int i)
+{
+    return (int *)((char *)param + av1_params[i].offset);
+}
 
 const char *
 tconfig_codec_order_to_str(
@@ -405,22 +456,27 @@ tconfig_load_gfx_av1_ct(toml_table_t *tfile, const int connection_type,
         return 1;
     }
 
-    /* threads */
-    datum = toml_int_in(av1_ct, "threads");
-    if (datum.ok)
+    for (unsigned int i = 0; i < AV1_PARAM_COUNT; i++)
     {
-        if (datum.u.i >= 1 && datum.u.i <= AV1_MAX_THREADS)
+        const struct av1_param_def *pd = &av1_params[i];
+
+        datum = toml_int_in(av1_ct, pd->key);
+        if (!datum.ok)
         {
-            param[connection_type].threads = datum.u.i;
+            continue;
+        }
+        if (datum.u.i >= pd->min && datum.u.i <= pd->max)
+        {
+            *av1_param_ptr(&param[connection_type], i) = (int)datum.u.i;
         }
         else
         {
             TCLOG(LOG_LEVEL_WARNING,
-                  "[AV1.%s] threads must be 1 to %d, "
+                  "[AV1.%s] %s must be %d to %d, "
                   "adopting the default value [%d]",
                   rdpbcgr_connection_type_names[connection_type],
-                  AV1_MAX_THREADS, AV1_DEFAULT_THREADS);
-            param[connection_type].threads = AV1_DEFAULT_THREADS;
+                  pd->key, pd->min, pd->max, pd->def);
+            *av1_param_ptr(&param[connection_type], i) = pd->def;
         }
     }
 
@@ -592,29 +648,35 @@ disable_codec(struct xrdp_tconfig_gfx_codec_order *co,
     co->codec_count = j;
 }
 
-/* XRDP_GFX_AV1_THREADS, if set, overrides gfx.toml for every connection
- * type */
+/* XRDP_GFX_AV1_<KEY> (XRDP_GFX_AV1_THREADS, XRDP_GFX_AV1_CPU_USED, ...),
+ * if set, overrides gfx.toml for every connection type. Invalid values
+ * are ignored */
 static void
 tconfig_load_gfx_av1_env(struct xrdp_tconfig_gfx *config)
 {
-    const char *env_var = g_getenv("XRDP_GFX_AV1_THREADS");
-    int threads;
+    for (unsigned int i = 0; i < AV1_PARAM_COUNT; i++)
+    {
+        const struct av1_param_def *pd = &av1_params[i];
+        const char *env_var = g_getenv(pd->env);
+        int value;
 
-    if (env_var == NULL)
-    {
-        return;
-    }
-    threads = g_atoix(env_var);
-    if (threads < 1 || threads > AV1_MAX_THREADS)
-    {
-        TCLOG(LOG_LEVEL_WARNING, "XRDP_GFX_AV1_THREADS set but invalid %s "
-              "(must be 1 to %d), ignoring it", env_var, AV1_MAX_THREADS);
-        return;
-    }
-    TCLOG(LOG_LEVEL_INFO, "XRDP_GFX_AV1_THREADS set to %d", threads);
-    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
-    {
-        config->av1_param[ct].threads = threads;
+        if (env_var == NULL)
+        {
+            continue;
+        }
+        value = g_atoix(env_var);
+        if (value < pd->min || value > pd->max)
+        {
+            TCLOG(LOG_LEVEL_WARNING, "%s set but invalid %s "
+                  "(must be %d to %d), ignoring it", pd->env, env_var,
+                  pd->min, pd->max);
+            continue;
+        }
+        TCLOG(LOG_LEVEL_INFO, "%s set to %d", pd->env, value);
+        for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+        {
+            *av1_param_ptr(&config->av1_param[ct], i) = value;
+        }
     }
 }
 
@@ -632,7 +694,10 @@ tconfig_load_gfx_file(const char *filename, struct xrdp_tconfig_gfx *config)
     memset(config->x264_param, 0, sizeof(config->x264_param));
     for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
     {
-        config->av1_param[ct].threads = AV1_DEFAULT_THREADS;
+        for (unsigned int i = 0; i < AV1_PARAM_COUNT; i++)
+        {
+            *av1_param_ptr(&config->av1_param[ct], i) = av1_params[i].def;
+        }
     }
 
     if ((fp = fopen(filename, "r")) == NULL)

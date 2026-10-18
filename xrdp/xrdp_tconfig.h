@@ -56,6 +56,9 @@ struct xrdp_tconfig_gfx_openh264_param
 struct xrdp_tconfig_gfx_av1_param
 {
     int threads;
+    int cpu_used;       /* real-time speed, 5 (slower, smaller) to 12 */
+    int cq_level;       /* constant quality, 0 (best) to 63 */
+    int target_bitrate; /* kbps; 0 for constant quality (cq_level) */
 };
 
 enum xrdp_tconfig_codecs

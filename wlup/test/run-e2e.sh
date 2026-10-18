@@ -328,6 +328,22 @@ if [ -x "$XFREERDP_AV1" ] && grep -q "av1 (libaom) *yes" "$OUT/configure.log"; t
     AV1_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
     echo "AV1 title bars, foot focused: $AV1_FOOT_L $AV1_FOOT_R;" \
          "wev focused: $AV1_WEV_L $AV1_WEV_R"
+    kill $CLIENT 2>/dev/null || true
+    sleep 3
+    # [AV1] settings: a faster speed and a bitrate reach the encoder.
+    # gfx.toml is read again for each connection
+    cp /etc/xrdp/gfx.toml /tmp/gfx.toml.orig
+    sed -i '/^\[AV1.default\]/,/^\[/{s/^cpu_used = .*/cpu_used = 11/;s/^target_bitrate = .*/target_bitrate = 5000/}' \
+        /etc/xrdp/gfx.toml
+    log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
+    "$XFREERDP_AV1" /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+        /size:1600x900 /bpp:32 /gfx:AV1:i444 -grab-keyboard \
+        > "$OUT/client-av1-settings.log" 2>&1 &
+    CLIENT=$!
+    sleep 8
+    import -window root "$OUT/client-12-av1-settings.png"
+    AV1_SETTINGS_LOG=$(tail -n +"$log_from" /var/log/xrdp.log)
+    cp /tmp/gfx.toml.orig /etc/xrdp/gfx.toml
 fi
 # focused <#RRGGBB>: near sway's focused title bar colour. H.264 is
 # lossy, so the client shows e.g. #275475 for #285577
@@ -409,7 +425,7 @@ if [ "$AV1_RAN" = 1 ]; then
          [ "$(convert "$OUT/client-av1-build-h264.png" -format %k info:)" -gt 50 ]'
     check "av1: i420 gets AV1 in 4:2:0" \
         'echo "$AV1_I420_LOG" | grep -q "Matched AV1 mode" &&
-         echo "$AV1_I420_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0, 2 threads)" &&
+         echo "$AV1_I420_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0, cpu-used 10, cq-level 28, 2 threads)" &&
          ! echo "$AV1_I420_LOG" | grep -q "AV1 in 4:4:4"'
     check "av1: the AV1 client gets AV1" \
         'echo "$AV1_LOG" | grep -q "Matched AV1 mode" &&
@@ -418,7 +434,7 @@ if [ "$AV1_RAN" = 1 ]; then
     check "av1: i444 gets 4:4:4 from wlup to the encoder" \
         'echo "$AV1_LOG" | grep -q "AV1 in 4:4:4: frames come as yuv444" &&
          echo "$AV1_LOG" | grep -q "wlup: frames go to the GFX encoder, as yuv444" &&
-         echo "$AV1_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:4:4, 2 threads)"'
+         echo "$AV1_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:4:4, cpu-used 10, cq-level 28, 2 threads)"'
     check "av1: no frame dropped by the encoder" \
         '! echo "$AV1_LOG" | grep -q "dropped"'
     check "av1: the client decodes without errors" \
@@ -430,6 +446,11 @@ if [ "$AV1_RAN" = 1 ]; then
     check "av1: a focus change shows on the client" \
         'focused "$AV1_FOOT_L" && ! focused "$AV1_FOOT_R" &&
          focused "$AV1_WEV_R" && ! focused "$AV1_WEV_L"'
+    check "av1: cpu_used and target_bitrate reach the encoder" \
+        'echo "$AV1_SETTINGS_LOG" | grep -q "cpu-used 11, CBR 5000 kbps, 2 threads"'
+    check "av1: the client decodes the CBR stream without errors" \
+        '! grep -E "\[ERROR\].*(rdpgfx|codec|gdi)" "$OUT/client-av1-settings.log" &&
+         [ "$(convert "$OUT/client-12-av1-settings.png" -format %k info:)" -gt 50 ]'
 else
     echo "SKIP  av1: no AV1 client ($XFREERDP_AV1) or xrdp without libaom"
 fi
