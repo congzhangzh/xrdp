@@ -104,6 +104,43 @@ av1_param_ptr(struct xrdp_tconfig_gfx_av1_param *param, unsigned int i)
 }
 
 const char *
+tconfig_av1_chroma_to_str(enum xrdp_tconfig_av1_chroma chroma)
+{
+    switch (chroma)
+    {
+        case XTC_AV1_CHROMA_420:
+            return "420";
+        case XTC_AV1_CHROMA_444:
+            return "444";
+        default:
+            return "auto";
+    }
+}
+
+/* "auto", "420" or "444". Returns 0 if s is one of them */
+static int
+av1_chroma_from_str(const char *s, enum xrdp_tconfig_av1_chroma *chroma)
+{
+    if (g_strcasecmp(s, "auto") == 0)
+    {
+        *chroma = XTC_AV1_CHROMA_AUTO;
+    }
+    else if (g_strcmp(s, "420") == 0)
+    {
+        *chroma = XTC_AV1_CHROMA_420;
+    }
+    else if (g_strcmp(s, "444") == 0)
+    {
+        *chroma = XTC_AV1_CHROMA_444;
+    }
+    else
+    {
+        return 1;
+    }
+    return 0;
+}
+
+const char *
 tconfig_codec_order_to_str(
     const struct xrdp_tconfig_gfx_codec_order *codec_order,
     char *buff,
@@ -480,6 +517,32 @@ tconfig_load_gfx_av1_ct(toml_table_t *tfile, const int connection_type,
         }
     }
 
+    /* chroma: "auto", "420" or "444", also as the number 420 or 444 */
+    datum = toml_string_in(av1_ct, "chroma");
+    if (!datum.ok)
+    {
+        toml_datum_t num = toml_int_in(av1_ct, "chroma");
+        if (num.ok)
+        {
+            datum.ok = 1;
+            datum.u.s = g_strdup(num.u.i == 420 ? "420" :
+                                 num.u.i == 444 ? "444" : "invalid");
+        }
+    }
+    if (datum.ok)
+    {
+        if (av1_chroma_from_str(datum.u.s,
+                                &param[connection_type].chroma) != 0)
+        {
+            TCLOG(LOG_LEVEL_WARNING,
+                  "[AV1.%s] chroma must be \"auto\", \"420\" or \"444\", "
+                  "adopting the default value \"auto\"",
+                  rdpbcgr_connection_type_names[connection_type]);
+            param[connection_type].chroma = XTC_AV1_CHROMA_AUTO;
+        }
+        free(datum.u.s);
+    }
+
     return 0;
 }
 
@@ -648,12 +711,15 @@ disable_codec(struct xrdp_tconfig_gfx_codec_order *co,
     co->codec_count = j;
 }
 
-/* XRDP_GFX_AV1_<KEY> (XRDP_GFX_AV1_THREADS, XRDP_GFX_AV1_CPU_USED, ...),
- * if set, overrides gfx.toml for every connection type. Invalid values
- * are ignored */
+/* XRDP_GFX_AV1_<KEY> (XRDP_GFX_AV1_THREADS, XRDP_GFX_AV1_CPU_USED, ...,
+ * XRDP_GFX_AV1_CHROMA), if set, overrides gfx.toml for every connection
+ * type. Invalid values are ignored */
 static void
 tconfig_load_gfx_av1_env(struct xrdp_tconfig_gfx *config)
 {
+    const char *chroma_env = g_getenv("XRDP_GFX_AV1_CHROMA");
+    enum xrdp_tconfig_av1_chroma chroma;
+
     for (unsigned int i = 0; i < AV1_PARAM_COUNT; i++)
     {
         const struct av1_param_def *pd = &av1_params[i];
@@ -678,6 +744,22 @@ tconfig_load_gfx_av1_env(struct xrdp_tconfig_gfx *config)
             *av1_param_ptr(&config->av1_param[ct], i) = value;
         }
     }
+
+    if (chroma_env == NULL)
+    {
+        return;
+    }
+    if (av1_chroma_from_str(chroma_env, &chroma) != 0)
+    {
+        TCLOG(LOG_LEVEL_WARNING, "XRDP_GFX_AV1_CHROMA set but invalid %s "
+              "(must be auto, 420 or 444), ignoring it", chroma_env);
+        return;
+    }
+    TCLOG(LOG_LEVEL_INFO, "XRDP_GFX_AV1_CHROMA set to %s", chroma_env);
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        config->av1_param[ct].chroma = chroma;
+    }
 }
 
 static int
@@ -698,6 +780,7 @@ tconfig_load_gfx_file(const char *filename, struct xrdp_tconfig_gfx *config)
         {
             *av1_param_ptr(&config->av1_param[ct], i) = av1_params[i].def;
         }
+        config->av1_param[ct].chroma = XTC_AV1_CHROMA_AUTO;
     }
 
     if ((fp = fopen(filename, "r")) == NULL)

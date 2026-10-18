@@ -147,6 +147,7 @@ START_TEST(test_tconfig_gfx_av1_params)
     ck_assert_int_eq(p->cpu_used, 10);
     ck_assert_int_eq(p->cq_level, 28);
     ck_assert_int_eq(p->target_bitrate, 0);
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
 
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
 
@@ -155,16 +156,27 @@ START_TEST(test_tconfig_gfx_av1_params)
     ck_assert_int_eq(p->cpu_used, 11);
     ck_assert_int_eq(p->cq_level, 30);
     ck_assert_int_eq(p->target_bitrate, 0);
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
 
     /* WAN: a bitrate, on top of the default section */
     p = &gfxconfig.av1_param[CONNECTION_TYPE_WAN];
     ck_assert_int_eq(p->target_bitrate, 15000);
     ck_assert_int_eq(p->cpu_used, 11);
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
+
+    /* broadband_low: chroma as a number */
+    p = &gfxconfig.av1_param[CONNECTION_TYPE_BROADBAND_LOW];
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_444);
 
     /* modem: invalid values take the defaults */
     p = &gfxconfig.av1_param[CONNECTION_TYPE_MODEM];
     ck_assert_int_eq(p->cpu_used, 10);
     ck_assert_int_eq(p->cq_level, 28);
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
+
+    ck_assert_str_eq(tconfig_av1_chroma_to_str(XTC_AV1_CHROMA_AUTO), "auto");
+    ck_assert_str_eq(tconfig_av1_chroma_to_str(XTC_AV1_CHROMA_420), "420");
+    ck_assert_str_eq(tconfig_av1_chroma_to_str(XTC_AV1_CHROMA_444), "444");
 }
 END_TEST
 
@@ -175,20 +187,26 @@ START_TEST(test_tconfig_gfx_av1_params_env)
     /* XRDP_GFX_AV1_<NAME> overrides the file for every connection type */
     g_setenv("XRDP_GFX_AV1_CPU_USED", "12", 1);
     g_setenv("XRDP_GFX_AV1_TARGET_BITRATE", "3000", 1);
+    g_setenv("XRDP_GFX_AV1_CHROMA", "444", 1);
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
     for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
     {
         ck_assert_int_eq(gfxconfig.av1_param[ct].cpu_used, 12);
         ck_assert_int_eq(gfxconfig.av1_param[ct].target_bitrate, 3000);
+        ck_assert_int_eq(gfxconfig.av1_param[ct].chroma, XTC_AV1_CHROMA_444);
     }
 
-    /* An invalid value is ignored: the file decides */
+    /* Invalid values are ignored: the file decides */
     g_setenv("XRDP_GFX_AV1_CPU_USED", "13", 1);
+    g_setenv("XRDP_GFX_AV1_CHROMA", "422", 1);
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
     ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].cpu_used, 11);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].chroma,
+                     XTC_AV1_CHROMA_420);
 
     unsetenv("XRDP_GFX_AV1_CPU_USED");
     unsetenv("XRDP_GFX_AV1_TARGET_BITRATE");
+    unsetenv("XRDP_GFX_AV1_CHROMA");
 }
 END_TEST
 

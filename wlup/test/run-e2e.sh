@@ -330,10 +330,11 @@ if [ -x "$XFREERDP_AV1" ] && grep -q "av1 (libaom) *yes" "$OUT/configure.log"; t
          "wev focused: $AV1_WEV_L $AV1_WEV_R"
     kill $CLIENT 2>/dev/null || true
     sleep 3
-    # [AV1] settings: a faster speed and a bitrate reach the encoder.
-    # gfx.toml is read again for each connection
+    # [AV1] settings: chroma = "420" keeps an i444 client in 4:2:0; a
+    # faster speed and a bitrate reach the encoder. gfx.toml is read again
+    # for each connection
     cp /etc/xrdp/gfx.toml /tmp/gfx.toml.orig
-    sed -i '/^\[AV1.default\]/,/^\[/{s/^cpu_used = .*/cpu_used = 11/;s/^target_bitrate = .*/target_bitrate = 5000/}' \
+    sed -i '/^\[AV1.default\]/,/^\[/{s/^chroma = .*/chroma = "420"/;s/^cpu_used = .*/cpu_used = 11/;s/^target_bitrate = .*/target_bitrate = 5000/}' \
         /etc/xrdp/gfx.toml
     log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
     "$XFREERDP_AV1" /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
@@ -425,6 +426,7 @@ if [ "$AV1_RAN" = 1 ]; then
          [ "$(convert "$OUT/client-av1-build-h264.png" -format %k info:)" -gt 50 ]'
     check "av1: i420 gets AV1 in 4:2:0" \
         'echo "$AV1_I420_LOG" | grep -q "Matched AV1 mode" &&
+         echo "$AV1_I420_LOG" | grep -q "AV1 in 4:2:0 (profile 0, chroma = \"auto\"): the client does not offer AV1 4:4:4" &&
          echo "$AV1_I420_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0, cpu-used 10, cq-level 28, 2 threads)" &&
          ! echo "$AV1_I420_LOG" | grep -q "AV1 in 4:4:4"'
     check "av1: the AV1 client gets AV1" \
@@ -432,7 +434,7 @@ if [ "$AV1_RAN" = 1 ]; then
          echo "$AV1_LOG" | grep -q "starting AV1 codec session gfx" &&
          echo "$AV1_LOG" | grep -q "xrdp_encoder_av1: encoder for 1600x900"'
     check "av1: i444 gets 4:4:4 from wlup to the encoder" \
-        'echo "$AV1_LOG" | grep -q "AV1 in 4:4:4: frames come as yuv444" &&
+        'echo "$AV1_LOG" | grep -q "AV1 in 4:4:4 (profile 1, chroma = \"auto\"): frames come as yuv444" &&
          echo "$AV1_LOG" | grep -q "wlup: frames go to the GFX encoder, as yuv444" &&
          echo "$AV1_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:4:4, cpu-used 10, cq-level 28, 2 threads)"'
     check "av1: no frame dropped by the encoder" \
@@ -446,6 +448,10 @@ if [ "$AV1_RAN" = 1 ]; then
     check "av1: a focus change shows on the client" \
         'focused "$AV1_FOOT_L" && ! focused "$AV1_FOOT_R" &&
          focused "$AV1_WEV_R" && ! focused "$AV1_WEV_L"'
+    check "av1: chroma = \"420\" keeps an i444 client in 4:2:0, and says why" \
+        'echo "$AV1_SETTINGS_LOG" | grep -q "AV1 in 4:2:0 (profile 0, chroma = \"420\"): gfx.toml asks for it" &&
+         ! echo "$AV1_SETTINGS_LOG" | grep -q "frames go to the GFX encoder, as yuv444" &&
+         echo "$AV1_SETTINGS_LOG" | grep -q "encoder for 1600x900 (picture 1600x900, 4:2:0,"'
     check "av1: cpu_used and target_bitrate reach the encoder" \
         'echo "$AV1_SETTINGS_LOG" | grep -q "cpu-used 11, CBR 5000 kbps, 2 threads"'
     check "av1: the client decodes the CBR stream without errors" \
