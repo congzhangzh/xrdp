@@ -3,7 +3,8 @@
 # Run with:
 #   docker run -d --privileged --cgroupns=private --tmpfs /run \
 #       --tmpfs /run/lock xrdp-wlup-systemd
-FROM xrdp-wlup-dev
+# On top of the FreeRDP client the suites connect with
+FROM xrdp-wlup-freerdp-av1
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         systemd systemd-sysv libpam-systemd dbus dbus-user-session \

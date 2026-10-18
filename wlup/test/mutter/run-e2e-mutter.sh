@@ -83,7 +83,7 @@ sleep 1
 . "$SRC/wlup/test/drive-mic-tests.sh"
 drive_mic_setup
 connect() {
-    xfreerdp3 /v:127.0.0.1 /u:tester /p:$PASSWORD /cert:ignore /size:${W}x${H} \
+    ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:$PASSWORD /cert:ignore /size:${W}x${H} \
         /bpp:${BPP:-24} /dynamic-resolution -grab-keyboard /sound:sys:fake ${2:-} \
         /log-filters:com.freerdp.channels.rdpsnd.client:DEBUG \
         > "$OUT/client$1.log" 2>&1 &

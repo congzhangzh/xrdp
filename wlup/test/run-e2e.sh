@@ -269,7 +269,7 @@ if [ -x "$XFREERDP_AV1" ] && grep -q "av1 (libaom) *yes" "$OUT/configure.log"; t
     sed -i 's/^order = .*/order = [ "AV1", "H.264", "RFX" ]/' /etc/xrdp/gfx.toml
     # Debian's client has no AV1: H.264 as before
     log_from=$(($(wc -l < /var/log/xrdp.log) + 1))
-    ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
+    ${XFREERDP_NO_AV1:-xfreerdp3} /v:127.0.0.1 /u:tester /p:wlup-test-pw /cert:ignore \
         /size:1600x900 /bpp:32 /gfx:AVC420 -grab-keyboard \
         > "$OUT/client-av1-fallback.log" 2>&1 &
     CLIENT=$!
