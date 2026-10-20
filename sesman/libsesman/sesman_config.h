@@ -258,6 +258,11 @@ struct config_sesman
      */
     struct list *gnome_params;
     /**
+     * @var kde_params
+     * @brief Command line starting a KDE Plasma session
+     */
+    struct list *kde_params;
+    /**
      * @var log
      * @brief Log configuration struct
      */

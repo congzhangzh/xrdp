@@ -54,6 +54,7 @@
 #define SESMAN_CFG_VNC_PARAMS        "Xvnc"
 #define SESMAN_CFG_WAYLAND_PARAMS    "Wayland"
 #define SESMAN_CFG_GNOME_PARAMS      "GNOME"
+#define SESMAN_CFG_KDE_PARAMS        "KDE"
 
 #define SESMAN_CFG_SESSION_VARIABLES "SessionVariables"
 
@@ -683,6 +684,8 @@ config_read(const char *sesman_ini)
                                           fd, SESMAN_CFG_WAYLAND_PARAMS, param_n, param_v);
                 cfg->gnome_params = config_read_command_params(
                                         fd, SESMAN_CFG_GNOME_PARAMS, param_n, param_v);
+                cfg->kde_params = config_read_command_params(
+                                      fd, SESMAN_CFG_KDE_PARAMS, param_n, param_v);
 
                 /* read security config */
                 config_read_security(fd, &(cfg->sec), param_n, param_v);
@@ -817,6 +820,18 @@ config_dump(struct config_sesman *config)
                   i, (char *)list_get_item(config->gnome_params, i));
     }
 
+    /* KDE */
+    if (config->kde_params->count)
+    {
+        g_writeln("KDE parameters:");
+    }
+
+    for (i = 0; i < config->kde_params->count; i++)
+    {
+        g_writeln("    Parameter %02d              %s",
+                  i, (char *)list_get_item(config->kde_params, i));
+    }
+
     /* SessionVariables */
     if (config->env_names->count)
     {
@@ -846,6 +861,7 @@ config_free(struct config_sesman *cs)
         list_delete(cs->xorg_params);
         list_delete(cs->wayland_params);
         list_delete(cs->gnome_params);
+        list_delete(cs->kde_params);
         list_delete(cs->env_names);
         list_delete(cs->env_values);
         g_free(cs->sec.pass_shell_as_env);
