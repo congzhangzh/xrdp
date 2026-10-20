@@ -1,0 +1,10 @@
+# What the wlup KWin backend (wlup/backends/kwin/kwin.c) binds of KWin's
+# Wayland globals. api-contract.py checks a running KWin against it:
+#   required|optional global <interface> <minimum version>
+required global wl_output 1
+required global zkde_screencast_unstable_v1 1
+required global org_kde_kwin_fake_input 4
+optional global wl_seat 1
+optional global ext_data_control_manager_v1 1
+optional global kde_output_device_registry_v2 21
+optional global kde_output_management_v2 18

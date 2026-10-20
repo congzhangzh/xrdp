@@ -61,6 +61,17 @@ jobs:
         with:
           submodules: recursive
 
+      # KWin casts its output only with OpenGL, which takes a DRM render
+      # node: the runner has no GPU, vgem gives it one
+      - name: Load vgem for the KDE suite
+        run: |
+          sudo modprobe vgem || {
+            sudo apt-get update
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+            sudo modprobe vgem
+          }
+          ls -l /dev/dri
+
       - name: Run all suites
         run: wlup/test/run-all.sh "$RUNNER_TEMP/wlup-test"
 
