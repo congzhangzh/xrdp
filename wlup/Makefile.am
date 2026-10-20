@@ -74,6 +74,7 @@ libwlup_la_SOURCES = \
   wlup_gfx.h \
   backends/wlroots/wlroots.c \
   backends/wlroots/clip.c \
+  backends/wlroots/clip.h \
   $(MUTTER_SOURCES)
 
 EXTRA_libwlup_la_SOURCES = backends/mutter/mutter.c backends/mutter/mutter.h \
