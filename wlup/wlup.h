@@ -41,7 +41,8 @@
 enum wlup_backend
 {
     WLUP_BACKEND_WLROOTS, /* Wayland protocols of wlroots compositors */
-    WLUP_BACKEND_MUTTER   /* GNOME: Mutter D-Bus APIs, PipeWire, libei */
+    WLUP_BACKEND_MUTTER,  /* GNOME: Mutter D-Bus APIs, PipeWire, libei */
+    WLUP_BACKEND_KWIN     /* KDE Plasma: KWin's protocols, PipeWire */
 };
 
 
@@ -180,8 +181,9 @@ struct wlup
     const struct wlup_backend_ops *ops; /* the backend, set on connect */
     char dbus_address[256]; /* Mutter backend: session bus, if not default */
     void *backend_data;     /* the backend's own state */
-    int pipewire_fd;        /* Mutter backend: PipeWire connection from
-                               sesman (display_aux_fd), or -1 */
+    int pipewire_fd;        /* Mutter and KWin backends: PipeWire
+                               connection from sesman (display_aux_fd),
+                               or -1 */
 
     /* clipboard */
     void *clip;             /* RDP side (wlup_clip.c) */
