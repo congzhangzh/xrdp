@@ -6,6 +6,9 @@ AM_CPPFLAGS = \
 if XRDP_WLUP_MUTTER
 AM_CPPFLAGS += -DXRDP_WLUP_MUTTER
 endif
+if XRDP_WLUP_KWIN
+AM_CPPFLAGS += -DXRDP_WLUP_KWIN
+endif
 
 LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) \
                   $(top_srcdir)/tap-driver.sh
