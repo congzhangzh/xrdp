@@ -131,6 +131,15 @@ AC_ARG_ENABLE(wlup-mutter, AS_HELP_STRING([--enable-wlup-mutter],
               [Build the GNOME (Mutter) backend of the wlup module (default: no)]),
               [], [enable_wlup_mutter=no])
 AM_CONDITIONAL(XRDP_WLUP_MUTTER, [test x$enable_wlup_mutter = xyes])
+AC_ARG_ENABLE(wlup-kwin, AS_HELP_STRING([--enable-wlup-kwin],
+              [Build the KDE Plasma (KWin) backend of the wlup module (default: no)]),
+              [], [enable_wlup_kwin=no])
+AM_CONDITIONAL(XRDP_WLUP_KWIN, [test x$enable_wlup_kwin = xyes])
+AC_ARG_WITH([plasma-wayland-protocols],
+            AS_HELP_STRING([--with-plasma-wayland-protocols=DIR],
+                           [Where the KDE Wayland protocol files are, for the KWin backend (default: /usr/share/plasma-wayland-protocols)]),
+            [], [with_plasma_wayland_protocols=/usr/share/plasma-wayland-protocols])
+AC_SUBST([PLASMA_WAYLAND_PROTOCOLS], [$with_plasma_wayland_protocols])
 
 AC_ARG_ENABLE(jpeg, AS_HELP_STRING([--enable-jpeg],
               [Build jpeg module (default: no)]),
@@ -506,6 +515,19 @@ then
   if test "x$enable_wlup_mutter" = "xyes"
   then
     PKG_CHECK_MODULES([WLUP_MUTTER], [libsystemd libpipewire-0.3 libei-1.0])
+  fi
+  if test "x$enable_wlup_kwin" = "xyes"
+  then
+    PKG_CHECK_MODULES([WLUP_KWIN], [libpipewire-0.3])
+    # The protocols are KWin's private ones, installed by the
+    # plasma-wayland-protocols package (KWin 6.7: 1.23)
+    for p in zkde-screencast-unstable-v1 fake-input kde-output-device-v2 kde-output-management-v2
+    do
+      if test ! -f "$with_plasma_wayland_protocols/$p.xml"
+      then
+        AC_MSG_ERROR([$p.xml is not in $with_plasma_wayland_protocols; install plasma-wayland-protocols or give --with-plasma-wayland-protocols])
+      fi
+    done
   fi
 fi
 
