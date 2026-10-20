@@ -217,6 +217,13 @@ xdotool key Return
 sleep 2
 import -window root "$OUT/client-8-h264-typed.png"
 
+# --- API contract: what Mutter offers against what the backend calls --------
+API_OK=0
+in_session "python3 -I $SRC/wlup/test/api/api-contract.py mutter \
+    $SRC/wlup/test/api/mutter.contract /tmp/api" > "$OUT/api-contract.txt" 2>&1 &&
+    API_OK=1
+cp /tmp/api/* "$OUT/" 2>/dev/null || true
+
 echo "=== result ==="
 pass=0
 fail=0
@@ -241,6 +248,11 @@ check "logind: remote wayland session of tester" \
      grep -q "^Remote=yes$" "$OUT/loginctl-session.txt"'
 check "mutter: PipeWire stream at the client size" \
     'grep -q "stream format BGR[xA] ${W}x${H}" /var/log/xrdp.log'
+check "api: Mutter offers what the backend calls (api/mutter.contract)" \
+    '[ $API_OK = 1 ]'
+check "mutter: API versions and capabilities logged" \
+    'grep -q "wlup/mutter: GNOME Shell .*, ScreenCast API version" /var/log/xrdp.log &&
+     grep -q "wlup/mutter: capabilities:" /var/log/xrdp.log'
 check "mutter: EIS keyboard and pointer" \
     'grep -q "EIS keyboard" /var/log/xrdp.log &&
      grep -q "EIS pointer" /var/log/xrdp.log'
