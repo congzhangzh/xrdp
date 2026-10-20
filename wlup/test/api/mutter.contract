@@ -1,0 +1,25 @@
+# What the wlup Mutter backend (wlup/backends/mutter/mutter.c) calls in
+# Mutter's private D-Bus APIs. api-contract.py checks a running GNOME
+# against it. One line per member:
+#   <interface> method|signal|property <name> <in signature> <out signature>
+# "-" is an empty signature; a property has its type as <out>.
+# required: wlup does not connect without it. optional: a feature is lost.
+required org.gnome.Mutter.RemoteDesktop method CreateSession - o
+required org.gnome.Mutter.RemoteDesktop property Version - i
+optional org.gnome.Mutter.RemoteDesktop property SupportedDeviceTypes - u
+required org.gnome.Mutter.RemoteDesktop.Session method Start - -
+required org.gnome.Mutter.RemoteDesktop.Session method Stop - -
+required org.gnome.Mutter.RemoteDesktop.Session method ConnectToEIS a{sv} h
+required org.gnome.Mutter.RemoteDesktop.Session signal Closed - -
+required org.gnome.Mutter.RemoteDesktop.Session property SessionId - s
+optional org.gnome.Mutter.RemoteDesktop.Session method EnableClipboard a{sv} -
+optional org.gnome.Mutter.RemoteDesktop.Session method SetSelection a{sv} -
+optional org.gnome.Mutter.RemoteDesktop.Session method SelectionWrite u h
+optional org.gnome.Mutter.RemoteDesktop.Session method SelectionWriteDone ub -
+optional org.gnome.Mutter.RemoteDesktop.Session method SelectionRead s h
+optional org.gnome.Mutter.RemoteDesktop.Session signal SelectionOwnerChanged a{sv} -
+optional org.gnome.Mutter.RemoteDesktop.Session signal SelectionTransfer su -
+required org.gnome.Mutter.ScreenCast method CreateSession a{sv} o
+required org.gnome.Mutter.ScreenCast property Version - i
+required org.gnome.Mutter.ScreenCast.Session method RecordVirtual a{sv} o
+required org.gnome.Mutter.ScreenCast.Stream signal PipeWireStreamAdded u -
