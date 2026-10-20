@@ -72,6 +72,19 @@
  * painted into the frames, so the RDP client can draw it locally */
 #define CURSOR_MODE_METADATA 2
 
+/* Mutter's D-Bus APIs are private and change between GNOME releases;
+ * each has a Version property. RecordVirtual takes "cursor-mode" from
+ * ScreenCast API version 2 and "is-platform" from version 3 (Mutter's
+ * data/dbus-interfaces/org.gnome.Mutter.ScreenCast.xml). The
+ * RemoteDesktop methods have no version notes: the session object is
+ * introspected for them instead */
+#define SC_VERSION_CURSOR_MODE 2
+#define SC_VERSION_IS_PLATFORM 3
+
+/* RemoteDesktop SupportedDeviceTypes */
+#define DEVICE_TYPE_KEYBOARD 1
+#define DEVICE_TYPE_POINTER 2
+
 /* Clipboard transfers to the session queued between two polls */
 #define MAX_TRANSFERS 16
 
@@ -109,6 +122,14 @@ struct wlup_mutter
     int pointer_placed; /* pointer moved away from the hot corner */
 
     uint64_t resize_start; /* when the pending resize was requested */
+
+    /* What this GNOME offers (probe_api(), probe_session()) */
+    int sc_version;         /* ScreenCast API version */
+    int rd_version;         /* RemoteDesktop API version */
+    uint32_t device_types;  /* RemoteDesktop SupportedDeviceTypes */
+    char shell_version[32]; /* GNOME Shell's, or empty */
+    int has_eis;            /* the session has ConnectToEIS */
+    int has_clipboard;      /* the session has EnableClipboard */
 
     /* clipboard */
     sd_bus_slot *owner_changed_slot;
@@ -413,6 +434,109 @@ call_for_path(struct wlup_mutter *m, const char *dest, const char *path,
 }
 
 /******************************************************************************/
+/* Reads the API versions of the running GNOME. return error if it is too
+ * old for wlup */
+static int
+probe_api(struct wlup_mutter *m)
+{
+    sd_bus_error err = SD_BUS_ERROR_NULL;
+    char *shell_version = NULL;
+    int32_t version;
+
+    if (sd_bus_get_property_trivial(m->bus, SC_NAME, SC_PATH, SC_NAME,
+                                    "Version", &err, 'i', &version) < 0)
+    {
+        LOG(LOG_LEVEL_ERROR, "wlup/mutter: no ScreenCast API version: %s",
+            err.message);
+        sd_bus_error_free(&err);
+        return 1;
+    }
+    m->sc_version = version;
+    if (sd_bus_get_property_trivial(m->bus, RD_NAME, RD_PATH, RD_NAME,
+                                    "Version", &err, 'i', &version) < 0)
+    {
+        LOG(LOG_LEVEL_ERROR, "wlup/mutter: no RemoteDesktop API version: %s",
+            err.message);
+        sd_bus_error_free(&err);
+        return 1;
+    }
+    m->rd_version = version;
+    if (sd_bus_get_property_trivial(m->bus, RD_NAME, RD_PATH, RD_NAME,
+                                    "SupportedDeviceTypes", &err, 'u',
+                                    &m->device_types) < 0)
+    {
+        sd_bus_error_free(&err);
+        m->device_types = 0;
+    }
+    /* Only for the log: GNOME Shell may not be the compositor */
+    if (sd_bus_get_property_string(m->bus, "org.gnome.Shell",
+                                   "/org/gnome/Shell", "org.gnome.Shell",
+                                   "ShellVersion", &err, &shell_version) >= 0)
+    {
+        g_strncpy(m->shell_version, shell_version,
+                  sizeof(m->shell_version) - 1);
+        free(shell_version);
+    }
+    sd_bus_error_free(&err);
+
+    LOG(LOG_LEVEL_INFO, "wlup/mutter: GNOME Shell %s, ScreenCast API "
+        "version %d, RemoteDesktop API version %d, device types 0x%x",
+        m->shell_version[0] != '\0' ? m->shell_version : "(unknown)",
+        m->sc_version, m->rd_version, m->device_types);
+    if (m->sc_version < SC_VERSION_CURSOR_MODE)
+    {
+        LOG(LOG_LEVEL_ERROR, "wlup/mutter: wlup needs ScreenCast API "
+            "version %d or later", SC_VERSION_CURSOR_MODE);
+        return 1;
+    }
+    if (m->device_types != 0 &&
+            (m->device_types & (DEVICE_TYPE_KEYBOARD | DEVICE_TYPE_POINTER)) !=
+            (DEVICE_TYPE_KEYBOARD | DEVICE_TYPE_POINTER))
+    {
+        LOG(LOG_LEVEL_ERROR, "wlup/mutter: Mutter offers no remote keyboard "
+            "and pointer (device types 0x%x)", m->device_types);
+        return 1;
+    }
+    return 0;
+}
+
+/******************************************************************************/
+/* Finds which RemoteDesktop session methods this Mutter has. return error
+ * if one wlup needs is missing */
+static int
+probe_session(struct wlup_mutter *m)
+{
+    sd_bus_error err = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    const char *xml;
+
+    if (sd_bus_call_method(m->bus, RD_NAME, m->rd_session_path,
+                           "org.freedesktop.DBus.Introspectable", "Introspect",
+                           &err, &reply, "") < 0 ||
+            sd_bus_message_read(reply, "s", &xml) < 0)
+    {
+        /* Not knowing is no reason to fail: the calls will tell */
+        LOG(LOG_LEVEL_WARNING, "wlup/mutter: cannot introspect the remote "
+            "desktop session: %s", err.message != NULL ? err.message : "");
+        sd_bus_error_free(&err);
+        sd_bus_message_unref(reply);
+        m->has_eis = 1;
+        m->has_clipboard = 1;
+        return 0;
+    }
+    m->has_eis = strstr(xml, "<method name=\"ConnectToEIS\">") != NULL;
+    m->has_clipboard = strstr(xml, "<method name=\"EnableClipboard\">") != NULL;
+    sd_bus_message_unref(reply);
+    if (!m->has_eis)
+    {
+        LOG(LOG_LEVEL_ERROR, "wlup/mutter: the remote desktop session has no "
+            "ConnectToEIS: input needs libei (GNOME 46 or later)");
+        return 1;
+    }
+    return 0;
+}
+
+/******************************************************************************/
 /* return error */
 static int
 setup_sessions(struct wlup *v)
@@ -433,6 +557,10 @@ setup_sessions(struct wlup *v)
                       &m->rd_session_path, msg);
     msg = sd_bus_message_unref(msg);
     if (r != 0)
+    {
+        return 1;
+    }
+    if (probe_session(m) != 0)
     {
         return 1;
     }
@@ -460,12 +588,22 @@ setup_sessions(struct wlup *v)
         return 1;
     }
 
-    /* 3. a virtual monitor; the cursor comes as metadata, not painted */
+    /* 3. a virtual monitor; the cursor comes as metadata, not painted,
+     * and the monitor is a platform one (not a shared screen) where the
+     * API version has it */
     sd_bus_message_new_method_call(m->bus, &msg, SC_NAME, m->sc_session_path,
                                    SC_SESSION_IFACE, "RecordVirtual");
-    sd_bus_message_append(msg, "a{sv}", 2,
-                          "cursor-mode", "u", (uint32_t)CURSOR_MODE_METADATA,
-                          "is-platform", "b", 1);
+    if (m->sc_version >= SC_VERSION_IS_PLATFORM)
+    {
+        sd_bus_message_append(msg, "a{sv}", 2,
+                              "cursor-mode", "u", (uint32_t)CURSOR_MODE_METADATA,
+                              "is-platform", "b", 1);
+    }
+    else
+    {
+        sd_bus_message_append(msg, "a{sv}", 1,
+                              "cursor-mode", "u", (uint32_t)CURSOR_MODE_METADATA);
+    }
     r = call_for_path(m, SC_NAME, m->sc_session_path, SC_SESSION_IFACE,
                       "RecordVirtual", &m->stream_path, msg);
     msg = sd_bus_message_unref(msg);
@@ -504,15 +642,18 @@ setup_sessions(struct wlup *v)
         sd_bus_wait(m->bus, 100 * 1000);
     }
 
-    /* 5. input */
+    /* 5. input. A remote desktop without it is not one: fail rather
+     * than show the desktop read-only */
     r = sd_bus_call_method(m->bus, RD_NAME, m->rd_session_path,
                            RD_SESSION_IFACE, "ConnectToEIS", &err, &reply,
                            "a{sv}", 0);
     if (r < 0 || sd_bus_message_read(reply, "h", &fd) < 0)
     {
-        LOG(LOG_LEVEL_WARNING, "wlup/mutter: ConnectToEIS failed, no input: "
-            "%s", err.message != NULL ? err.message : "bad reply");
+        LOG(LOG_LEVEL_ERROR, "wlup/mutter: ConnectToEIS failed: %s",
+            err.message != NULL ? err.message : "bad reply");
         sd_bus_error_free(&err);
+        sd_bus_message_unref(reply);
+        return 1;
     }
     else
     {
@@ -522,8 +663,10 @@ setup_sessions(struct wlup *v)
         ei_configure_name(m->ei, "xrdp");
         if (ei_setup_backend_fd(m->ei, fd) != 0)
         {
-            LOG(LOG_LEVEL_WARNING, "wlup/mutter: libei setup failed");
+            LOG(LOG_LEVEL_ERROR, "wlup/mutter: libei setup failed");
             m->ei = ei_unref(m->ei);
+            sd_bus_message_unref(reply);
+            return 1;
         }
     }
     sd_bus_message_unref(reply);
@@ -745,6 +888,12 @@ enable_clipboard(struct wlup *v)
     struct wlup_mutter *m = (struct wlup_mutter *)v->backend_data;
     sd_bus_error err = SD_BUS_ERROR_NULL;
 
+    if (!m->has_clipboard)
+    {
+        LOG(LOG_LEVEL_WARNING, "wlup/mutter: the remote desktop session has "
+            "no EnableClipboard, no clipboard");
+        return;
+    }
     sd_bus_match_signal(m->bus, &m->owner_changed_slot, RD_NAME,
                         m->rd_session_path, RD_SESSION_IFACE,
                         "SelectionOwnerChanged", on_selection_owner_changed, v);
@@ -769,10 +918,10 @@ enable_clipboard(struct wlup *v)
 /******************************************************************************/
 /* Module side                                                                */
 /******************************************************************************/
-/* Waits until GNOME Shell offers its remote desktop API.
+/* Waits until GNOME Shell offers one of its D-Bus APIs (name).
  * return error */
 static int
-wait_for_mutter(struct wlup_mutter *m)
+wait_for_mutter(struct wlup_mutter *m, const char *name)
 {
     uint64_t start = monotonic_usec();
     int logged = 0;
@@ -785,7 +934,7 @@ wait_for_mutter(struct wlup_mutter *m)
         if (sd_bus_call_method(m->bus, "org.freedesktop.DBus",
                                "/org/freedesktop/DBus", "org.freedesktop.DBus",
                                "NameHasOwner", &err, &reply, "s",
-                               RD_NAME) >= 0 &&
+                               name) >= 0 &&
                 sd_bus_message_read(reply, "b", &has_owner) >= 0 &&
                 has_owner)
         {
@@ -797,7 +946,7 @@ wait_for_mutter(struct wlup_mutter *m)
         if (monotonic_usec() - start > MUTTER_TIMEOUT_USEC)
         {
             LOG(LOG_LEVEL_ERROR, "wlup/mutter: %s did not appear on the "
-                "session bus", RD_NAME);
+                "session bus", name);
             return 1;
         }
         if (!logged)
@@ -861,10 +1010,16 @@ wlup_mutter_connect(struct wlup *v, int bus_fd)
         return 1;
     }
 
-    if (wait_for_mutter(m) != 0)
+    if (wait_for_mutter(m, RD_NAME) != 0 || wait_for_mutter(m, SC_NAME) != 0)
     {
         v->server_msg(v, "wlup error - GNOME Shell does not offer its "
                       "remote desktop API", 0);
+        return 1;
+    }
+    if (probe_api(m) != 0)
+    {
+        v->server_msg(v, "wlup error - this GNOME's remote desktop API is "
+                      "not one wlup can use (see xrdp.log)", 0);
         return 1;
     }
     if (setup_sessions(v) != 0)
@@ -882,6 +1037,10 @@ wlup_mutter_connect(struct wlup *v, int bus_fd)
         return 1;
     }
     enable_clipboard(v);
+    LOG(LOG_LEVEL_INFO, "wlup/mutter: capabilities: virtual monitor yes, "
+        "platform monitor %s, EIS input %s, clipboard %s, resize yes",
+        m->sc_version >= SC_VERSION_IS_PLATFORM ? "yes" : "no",
+        m->ei != NULL ? "yes" : "no", m->clipboard_enabled ? "yes" : "no");
 
     /* Success: the connection from sesman is ours to close */
     if (bus_fd >= 0)
