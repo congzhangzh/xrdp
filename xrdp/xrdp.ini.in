@@ -282,6 +282,17 @@ normal_frame_interval=40
 #code=30
 #xkb_layout=us
 
+; Experimental KDE Plasma session: sesman starts KWin from the [KDE]
+; section of sesman.ini. Build xrdp with --enable-wlup --enable-wlup-kwin.
+#[KDE]
+#name=KDE Plasma
+#lib=libwlup.@lib_extension@
+#username=ask
+#password=ask
+#port=-1
+#code=32
+#backend=kwin
+
 [Xvnc]
 name=Xvnc
 lib=libvnc.@lib_extension@

@@ -210,6 +210,18 @@ param=@sesmansysconfdir@/startwayland.sh
 ; PipeWire, opened as the user.
 param=@sesmansysconfdir@/startgnome.sh
 
+[KDE]
+; Experimental: KDE Plasma sessions (xrdp.ini code=32, using the wlup
+; module with backend=kwin). The command must exec KWin, which then
+; leads the session and starts Plasma. KWin runs on its virtual backend
+; and casts its output only when it composites with OpenGL: that needs
+; a DRM render node, which a machine without a GPU gets from the vgem
+; module; the user needs access to that node (often the render group,
+; and video for vgem's card node), as a session without a seat gets no
+; device access from logind. sesman connects to KWin's socket and passes
+; the connection to xrdp, with one to PipeWire, opened as the user.
+param=@sesmansysconfdir@/startplasma.sh
+
 [Chansrv]
 ; drive redirection
 ; See sesman.ini(5) for the format of this parameter
