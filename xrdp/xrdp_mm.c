@@ -370,6 +370,10 @@ xrdp_mm_create_session(struct xrdp_mm *self)
             type = SCP_SESSION_TYPE_GNOME;
             break;
 
+        case KDE_SESSION_CODE:
+            type = SCP_SESSION_TYPE_KDE;
+            break;
+
         default:
             xrdp_wm_log_msg(self->wm, LOG_LEVEL_ERROR,
                             "Unrecognised session code %d", self->code);
@@ -456,10 +460,9 @@ xrdp_mm_update_av1_444(struct xrdp_mm *self)
     {
         why_420 = "the client does not offer AV1 4:4:4";
     }
-    else if (self->code != WAYLAND_SESSION_CODE &&
-             self->code != GNOME_SESSION_CODE)
+    else if (!IS_WLUP_SESSION_CODE(self->code))
     {
-        why_420 = "only Wayland and GNOME sessions send full colour";
+        why_420 = "only Wayland, GNOME and KDE sessions send full colour";
     }
     else
     {
@@ -482,14 +485,13 @@ xrdp_mm_update_av1_444(struct xrdp_mm *self)
 }
 
 /*****************************************************************************/
-/* In Wayland and GNOME sessions, the module provides the clipboard
+/* In Wayland, GNOME and KDE sessions, the module provides the clipboard
  * itself (chansrv's clipboard needs X11), and chansrv the other
  * channels */
 int
 xrdp_mm_module_owns_channel(struct xrdp_mm *self, const char *name)
 {
-    return (self->code == WAYLAND_SESSION_CODE ||
-            self->code == GNOME_SESSION_CODE) &&
+    return IS_WLUP_SESSION_CODE(self->code) &&
            g_strcasecmp(name, CLIPRDR_SVC_CHANNEL_NAME) == 0;
 }
 
@@ -5751,8 +5753,7 @@ xrdp_mm_setup_mod2(struct xrdp_mm *self)
             g_snprintf(text, sizeof(text), XRDP_X11RDP_STR,
                        self->uid, self->display);
         }
-        else if (self->code == WAYLAND_SESSION_CODE ||
-                 self->code == GNOME_SESSION_CODE)
+        else if (IS_WLUP_SESSION_CODE(self->code))
         {
             // The module is passed connections to the session by
             // sesman, so no port is needed

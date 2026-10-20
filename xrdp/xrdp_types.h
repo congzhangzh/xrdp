@@ -41,6 +41,11 @@
 #define XORG_SESSION_CODE 20
 #define WAYLAND_SESSION_CODE 30
 #define GNOME_SESSION_CODE 31
+#define KDE_SESSION_CODE 32
+/* The session codes served by the wlup module, whatever its backend */
+#define IS_WLUP_SESSION_CODE(code) \
+    ((code) == WAYLAND_SESSION_CODE || (code) == GNOME_SESSION_CODE || \
+     (code) == KDE_SESSION_CODE)
 
 /* To check whether touch events has been implemented on session type 'mm' */
 #define XRDP_MM_IMPLEMENTS_TOUCH(mm) \

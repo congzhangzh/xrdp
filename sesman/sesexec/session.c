@@ -210,7 +210,8 @@ wayland_display_label(const struct session_data *sd, int pid,
                       char *buf, unsigned int bufsize)
 {
     g_snprintf(buf, bufsize, "%s-%d",
-               sd->params.type == SCP_SESSION_TYPE_GNOME ? "gnome" : "wlup",
+               sd->params.type == SCP_SESSION_TYPE_GNOME ? "gnome" :
+               sd->params.type == SCP_SESSION_TYPE_KDE ? "kde" : "wlup",
                pid);
 }
 
@@ -246,7 +247,8 @@ start_chansrv(const struct login_info *login_info,
         /* Without an X display, chansrv takes its display name from
          * WAYLAND_DISPLAY; it does not connect to it */
         if (sd->params.type == SCP_SESSION_TYPE_WAYLAND ||
-                sd->params.type == SCP_SESSION_TYPE_GNOME)
+                sd->params.type == SCP_SESSION_TYPE_GNOME ||
+                sd->params.type == SCP_SESSION_TYPE_KDE)
         {
             g_setenv_log("WAYLAND_DISPLAY", sd->display, 1);
         }
@@ -858,8 +860,12 @@ start_wayland_compositor(const struct login_info *login_info,
     char execvpparams[2048];
     const struct session_parameters *sp = &sd->params;
     int gnome = (sp->type == SCP_SESSION_TYPE_GNOME);
+    int kde = (sp->type == SCP_SESSION_TYPE_KDE);
     struct list *params = gnome ? g_cfg->gnome_params
+                              : kde ? g_cfg->kde_params
                               : g_cfg->wayland_params;
+    const char *what = gnome ? "GNOME session"
+                       : kde ? "KDE Plasma session" : "Wayland compositor";
 
     env_set_user(login_info->uid,
                  g_cfg->env_names,
@@ -905,12 +911,11 @@ start_wayland_compositor(const struct login_info *login_info,
     if (params == NULL || params->count == 0)
     {
         LOG(LOG_LEVEL_ERROR, "No command in the [%s] section of "
-            "sesman.ini", gnome ? "GNOME" : "Wayland");
+            "sesman.ini", gnome ? "GNOME" : kde ? "KDE" : "Wayland");
     }
     else
     {
-        LOG(LOG_LEVEL_INFO, "Starting %s: %s",
-            gnome ? "GNOME session" : "Wayland compositor",
+        LOG(LOG_LEVEL_INFO, "Starting %s: %s", what,
             dumpItemsToString(params, execvpparams, sizeof(execvpparams)));
         LOG_DEVEL_LEAKING_FDS("Wayland compositor", 3, -1);
         g_execvp_list((const char *)params->items[0], params);
@@ -919,8 +924,7 @@ start_wayland_compositor(const struct login_info *login_info,
     }
 
     LOG(LOG_LEVEL_ERROR, "A fatal error has occurred attempting "
-        "to start the %s, aborting connection",
-        gnome ? "GNOME session" : "Wayland compositor");
+        "to start the %s, aborting connection", what);
 }
 
 /******************************************************************************/
@@ -1227,7 +1231,8 @@ session_start_wrapped(struct login_info *login_info,
 #endif
 
     if (s->type == SCP_SESSION_TYPE_WAYLAND ||
-            s->type == SCP_SESSION_TYPE_GNOME)
+            s->type == SCP_SESSION_TYPE_GNOME ||
+            s->type == SCP_SESSION_TYPE_KDE)
     {
         return session_start_wayland(login_info, sd);
     }
@@ -1811,11 +1816,13 @@ session_get_display_server_aux_fd(const struct login_info *login_info,
 {
     char path[XRDP_SOCKETS_MAXPATH];
 
-    if (sd->params.type != SCP_SESSION_TYPE_GNOME || sd->win_mgr <= 0)
+    if ((sd->params.type != SCP_SESSION_TYPE_GNOME &&
+            sd->params.type != SCP_SESSION_TYPE_KDE) || sd->win_mgr <= 0)
     {
         return -1;
     }
-    /* GNOME Shell's screen cast streams are on the user's PipeWire */
+    /* GNOME Shell's and KWin's screen cast streams are on the user's
+     * PipeWire */
     g_snprintf(path, sizeof(path), "%s/pipewire-0", sd->runtime_dir);
     return connect_as_user(login_info, path);
 }
@@ -1832,7 +1839,8 @@ session_get_display_server_fd(const struct login_info *login_info,
     int rv = -1;
 
     if (sd->params.type == SCP_SESSION_TYPE_WAYLAND ||
-            sd->params.type == SCP_SESSION_TYPE_GNOME)
+            sd->params.type == SCP_SESSION_TYPE_GNOME ||
+            sd->params.type == SCP_SESSION_TYPE_KDE)
     {
         /* The compositor, or gnome-session, plays the part of both the
          * display server and the window manager */
@@ -1876,6 +1884,7 @@ session_get_display_server_fd(const struct login_info *login_info,
                 break;
 
             case SCP_SESSION_TYPE_WAYLAND:
+            case SCP_SESSION_TYPE_KDE:
                 /* We are privileged, so can connect to the socket in
                  * the user's runtime directory. The connection is
                  * handed to the wlup module as a Wayland client */
