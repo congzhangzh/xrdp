@@ -8,6 +8,10 @@
 #                    session, microphone
 #   gnome-systemd    headless GNOME through the Mutter backend, with
 #                    systemd as PID 1 (GNOME needs it)
+#   kde-systemd      KDE Plasma through the KWin backend, systemd as PID 1.
+#                    KWin casts only with OpenGL, which takes a DRM render
+#                    node: skipped when the host has none (without a GPU:
+#                    sudo modprobe vgem)
 #
 # Usage: wlup/test/run-all.sh [-n] [output dir]
 #   -n  do not rebuild the images
@@ -57,6 +61,7 @@ if [ $BUILD = 1 ]; then
     for img in "xrdp-wlup-dev $TEST_DIR" \
                "xrdp-wlup-freerdp-av1 $TEST_DIR/freerdp-av1" \
                "xrdp-wlup-systemd $TEST_DIR/systemd" \
+               "xrdp-wlup-kde $TEST_DIR/kde" \
                "xrdp-wlup-gnome $TEST_DIR/gnome" \
                "xrdp-wlup-mutter $TEST_DIR/mutter"; do
         set -- $img
@@ -74,7 +79,8 @@ echo "client: FreeRDP $(docker run --rm xrdp-wlup-freerdp-av1 cat /opt/freerdp-a
     "${FREERDP_SRC:+(${FREERDP_REF:-HEAD} of $FREERDP_SRC)}" | tee "$OUT/client.txt"
 
 cleanup() {
-    docker rm -f "$TAG-sway-systemd" "$TAG-gnome-systemd" > /dev/null 2>&1
+    docker rm -f "$TAG-sway-systemd" "$TAG-gnome-systemd" "$TAG-kde-systemd" \
+        > /dev/null 2>&1
 }
 trap cleanup EXIT
 
@@ -91,7 +97,10 @@ run_systemd() {
     docker rm -f "$TAG-$1" > /dev/null 2>&1
 }
 
-mkdir -p "$OUT/sway-no-systemd" "$OUT/sway-systemd" "$OUT/gnome-systemd"
+SUITES="sway-no-systemd sway-systemd gnome-systemd kde-systemd"
+for suite in $SUITES; do
+    mkdir -p "$OUT/$suite"
+done
 echo "running the suites in parallel, output in $OUT"
 
 docker run --rm --device /dev/fuse --cap-add SYS_ADMIN \
@@ -101,12 +110,23 @@ docker run --rm --device /dev/fuse --cap-add SYS_ADMIN \
              chmod -R a+r /out' &
 run_systemd sway-systemd xrdp-wlup-systemd /src/wlup/test/run-e2e.sh &
 run_systemd gnome-systemd xrdp-wlup-mutter /src/wlup/test/mutter/run-e2e-mutter.sh &
+if ls /dev/dri/renderD* > /dev/null 2>&1; then
+    run_systemd kde-systemd xrdp-wlup-kde /src/wlup/test/kde/run-e2e-kde.sh &
+else
+    echo "skipped: no DRM render node on the host, which KWin needs to" \
+        "cast its output (without a GPU: sudo modprobe vgem)" \
+        > "$OUT/kde-systemd/skipped.txt"
+fi
 wait
 
 # --- summary --------------------------------------------------------------
 status=0
-for suite in sway-no-systemd sway-systemd gnome-systemd; do
+for suite in $SUITES; do
     log="$OUT/$suite/run.log"
+    if [ -f "$OUT/$suite/skipped.txt" ]; then
+        printf '%-16s %s\n' "$suite" "$(cat "$OUT/$suite/skipped.txt")"
+        continue
+    fi
     result=$(grep -E '^passed [0-9]+, failed [0-9]+' "$log" 2>/dev/null | tail -1)
     printf '%-16s %s\n' "$suite" "${result:-did not finish, see $log}"
     grep -E '^FAIL' "$log" 2>/dev/null | sed 's/^/                 /'
