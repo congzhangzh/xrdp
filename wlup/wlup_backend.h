@@ -24,6 +24,7 @@
  *
  *   wlroots (backends/wlroots): Wayland protocols, ext-image-copy-capture
  *   Mutter  (backends/mutter):  D-Bus, PipeWire, libei
+ *   KWin    (backends/kwin):    KWin's Wayland protocols, PipeWire
  *
  * Frames go one way: a backend copies new pixels into the desktop image
  * (wlup.pixels, buffer_width x buffer_height, XRGB8888) and tells the core
@@ -88,6 +89,8 @@ struct wlup_backend_ops
 extern const struct wlup_backend_ops wlup_backend_wlroots;
 const struct wlup_backend_ops *
 wlup_backend_mutter(void);
+const struct wlup_backend_ops *
+wlup_backend_kwin(void);
 
 /* --- What the core offers backends ------------------------------------- */
 
