@@ -215,7 +215,8 @@ session_list_get_bydata(uid_t uid,
 
     /* A Wayland compositor has no colour depth of its own: wlup serves
      * clients of any bpp from the same session */
-    if (type == SCP_SESSION_TYPE_WAYLAND || type == SCP_SESSION_TYPE_GNOME)
+    if (type == SCP_SESSION_TYPE_WAYLAND || type == SCP_SESSION_TYPE_GNOME ||
+            type == SCP_SESSION_TYPE_KDE)
     {
         policy &= ~SESMAN_CFG_SESS_POLICY_B;
     }
