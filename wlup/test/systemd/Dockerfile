@@ -16,4 +16,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # don't start it in users' sessions, they use PipeWire
 RUN systemctl --global disable pulseaudio.socket pulseaudio.service
 
+# These containers run privileged, so /sys is the host's: udev's
+# coldplug trigger would replay every device event on the host, where
+# the console's login screen (gdm's gnome-shell) and logind react to
+# them, and the greeter has crashed on it. Nothing here needs it
+RUN systemctl mask systemd-udev-trigger.service
+
 CMD ["/usr/lib/systemd/systemd"]
