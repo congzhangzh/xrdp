@@ -15,7 +15,8 @@ AM_CFLAGS = $(WAYLAND_CLIENT_CFLAGS) $(XKBCOMMON_CFLAGS)
 if XRDP_WLUP_MUTTER
 AM_CPPFLAGS += -DXRDP_WLUP_MUTTER
 AM_CFLAGS += $(WLUP_MUTTER_CFLAGS)
-MUTTER_SOURCES = backends/mutter/mutter.c backends/mutter/mutter.h
+MUTTER_SOURCES = backends/mutter/mutter.c backends/mutter/mutter.h \
+  backends/pipewire/capture.c backends/pipewire/capture.h
 MUTTER_LIBS = $(WLUP_MUTTER_LIBS)
 else
 MUTTER_SOURCES =
@@ -75,7 +76,8 @@ libwlup_la_SOURCES = \
   backends/wlroots/clip.c \
   $(MUTTER_SOURCES)
 
-EXTRA_libwlup_la_SOURCES = backends/mutter/mutter.c backends/mutter/mutter.h
+EXTRA_libwlup_la_SOURCES = backends/mutter/mutter.c backends/mutter/mutter.h \
+  backends/pipewire/capture.c backends/pipewire/capture.h
 
 nodist_libwlup_la_SOURCES = $(PROTOCOL_H_FILES)
 
