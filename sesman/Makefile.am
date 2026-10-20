@@ -64,6 +64,7 @@ dist_sesmansysconf_SCRIPTS = \
   startwm.sh \
   startwayland.sh \
   startgnome.sh \
+  startplasma.sh \
   reconnectwm.sh
 
 SUBDIRS = \
