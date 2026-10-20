@@ -146,6 +146,15 @@ wlup_backend_mutter(void)
 }
 #endif
 
+#if defined(XRDP_WLUP_KWIN)
+/* The core only has this stub when built without the KWin backend */
+const struct wlup_backend_ops *
+wlup_backend_kwin(void)
+{
+    return NULL;
+}
+#endif
+
 /******************************************************************************/
 /* xrdp side                                                                  */
 /******************************************************************************/

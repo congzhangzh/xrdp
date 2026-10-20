@@ -54,6 +54,15 @@ wlup_backend_mutter(void)
 }
 #endif
 
+#if !defined(XRDP_WLUP_KWIN)
+/******************************************************************************/
+const struct wlup_backend_ops *
+wlup_backend_kwin(void)
+{
+    return NULL;
+}
+#endif
+
 /******************************************************************************/
 /* Painting                                                                   */
 /******************************************************************************/
@@ -382,10 +391,14 @@ static int
 lib_mod_connect(struct wlup *v, int fd)
 {
     v->ops = v->backend == WLUP_BACKEND_MUTTER ? wlup_backend_mutter()
+             : v->backend == WLUP_BACKEND_KWIN ? wlup_backend_kwin()
              : &wlup_backend_wlroots;
     if (v->ops == NULL)
     {
-        v->server_msg(v, "wlup error - built without the Mutter backend "
+        v->server_msg(v, v->backend == WLUP_BACKEND_KWIN ?
+                      "wlup error - built without the KWin backend "
+                      "(--enable-wlup-kwin)" :
+                      "wlup error - built without the Mutter backend "
                       "(--enable-wlup-mutter)", 0);
         return 1;
     }
@@ -443,8 +456,9 @@ lib_mod_set_param(struct wlup *v, const char *name, const char *value)
     }
     else if (g_strcasecmp(name, "backend") == 0)
     {
-        v->backend = g_strcasecmp(value, "mutter") == 0 ?
-                     WLUP_BACKEND_MUTTER : WLUP_BACKEND_WLROOTS;
+        v->backend = g_strcasecmp(value, "mutter") == 0 ? WLUP_BACKEND_MUTTER
+                     : g_strcasecmp(value, "kwin") == 0 ? WLUP_BACKEND_KWIN
+                     : WLUP_BACKEND_WLROOTS;
     }
     else if (g_strcasecmp(name, "dbus_address") == 0)
     {
