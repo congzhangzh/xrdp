@@ -52,6 +52,7 @@
 #include "wlup_clip.h"
 #include "wlup_gfx.h"
 #include "wlroots.h"
+#include "clip.h"
 #include "log.h"
 #include "string_calls.h"
 #include "scancode.h"
@@ -827,7 +828,8 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
     }
     else if (w->wlr_clip == NULL)
     {
-        wlup_wlr_clip_bind(v, registry, name, interface);
+        w->wlr_clip = wlup_wlr_clip_bind(v, w->display, registry, name,
+                                         interface);
     }
 }
 
@@ -1151,7 +1153,7 @@ wlroots_connect(struct wlup *v, int fd)
     }
 
     /* Text clipboard, session side. The core opens the RDP channel */
-    wlup_wlr_clip_start(v);
+    wlup_wlr_clip_start(w->wlr_clip, w->seat);
 
     g_snprintf(text, sizeof(text), "wlup: connected to Wayland display %s",
                name != NULL ? name : "$WAYLAND_DISPLAY");
@@ -1170,7 +1172,8 @@ wlroots_disconnect(struct wlup *v)
     {
         return;
     }
-    wlup_wlr_clip_destroy(v);
+    wlup_wlr_clip_destroy(w->wlr_clip);
+    w->wlr_clip = NULL;
     if (w->frame != NULL)
     {
         ext_image_copy_capture_frame_v1_destroy(w->frame);
@@ -1265,7 +1268,7 @@ wlroots_check_wait_objs(struct wlup *v)
     }
     wl_display_dispatch_pending(w->display);
     /* A new selection is read once all events are dispatched */
-    wlup_wlr_clip_process(v);
+    wlup_wlr_clip_process(w->wlr_clip);
     wl_display_flush(w->display);
 
     if (wl_display_get_error(w->display) != 0)
@@ -1337,6 +1340,18 @@ wlroots_flush(struct wlup *v)
 }
 
 /******************************************************************************/
+static void
+wlroots_set_clipboard_text(struct wlup *v, const char *text, int len)
+{
+    struct wlroots *w = WLR(v);
+
+    if (w != NULL)
+    {
+        wlup_wlr_clip_set_text(w->wlr_clip, text, len);
+    }
+}
+
+/******************************************************************************/
 const struct wlup_backend_ops wlup_backend_wlroots =
 {
     .name = "wlroots",
@@ -1350,5 +1365,5 @@ const struct wlup_backend_ops wlup_backend_wlroots =
     .frames_wanted = continue_capture,
     .pixels_busy = wlroots_pixels_busy,
     .flush = wlroots_flush,
-    .set_clipboard_text = wlup_wlr_set_clipboard_text
+    .set_clipboard_text = wlroots_set_clipboard_text
 };
