@@ -87,6 +87,7 @@ static struct
     { "Xorg", SCP_SESSION_TYPE_XORG},
     { "Wayland", SCP_SESSION_TYPE_WAYLAND},
     { "GNOME", SCP_SESSION_TYPE_GNOME},
+    { "KDE", SCP_SESSION_TYPE_KDE},
     { NULL, (enum scp_session_type) - 1}
 };
 
