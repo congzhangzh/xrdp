@@ -67,6 +67,7 @@ struct wlup_pwc
     struct spa_hook stream_listener;
     int width;
     int height;
+    int info_logged; /* the daemon's version */
     /* Damage copied while the core wanted no frames (wlup_wants_frames()),
      * painted once it does again: x, y, cx, cy per rect, or one
      * bounding box once they don't fit */
@@ -633,6 +634,21 @@ static const struct pw_stream_events stream_events =
 
 /******************************************************************************/
 static void
+on_core_info(void *data, const struct pw_core_info *info)
+{
+    struct wlup_pwc *c = (struct wlup_pwc *)data;
+
+    if (!c->info_logged)
+    {
+        c->info_logged = 1;
+        LOG(LOG_LEVEL_INFO, "wlup/%s: PipeWire daemon %s, library %s",
+            c->who, info->version != NULL ? info->version : "(unknown)",
+            pw_get_library_version());
+    }
+}
+
+/******************************************************************************/
+static void
 on_core_error(void *data, uint32_t id, int seq, int res, const char *message)
 {
     struct wlup_pwc *c = (struct wlup_pwc *)data;
@@ -644,6 +660,7 @@ on_core_error(void *data, uint32_t id, int seq, int res, const char *message)
 static const struct pw_core_events core_events =
 {
     .version = PW_VERSION_CORE_EVENTS,
+    .info = on_core_info,
     .error = on_core_error,
 };
 
