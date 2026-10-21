@@ -40,11 +40,14 @@ export XDG_CONFIG_DIRS="$conf:${XDG_CONFIG_DIRS:-/etc/xdg}"
 # screen and send input; 6.8 lets every program that is not sandboxed
 export KWIN_WAYLAND_NO_PERMISSION_CHECKS=1
 
-# KWin casts its output only when it composites with OpenGL, which takes
-# a DRM render node: a machine without a GPU gets one from vgem. The
-# session has no seat, so logind gives the user no access to the DRM
-# devices: the user needs the groups of the nodes (often render, and
-# video for vgem's card node)
+# KWin casts its output only when it composites with OpenGL. KWin 6.8
+# and later can render in software (Mesa's llvmpipe) with buffers from
+# /dev/udmabuf; older KWin needs a DRM render node, which a machine
+# without a GPU gets from vgem. The session has no seat, so logind gives
+# the user no access to these devices: the user needs their groups
+# (often kvm or disk for udmabuf, render, and video for vgem's card node)
+software=$(kwin_wayland --version 2>/dev/null | awk '/^kwin / {
+    split($2, v, "."); if (v[1] > 6 || (v[1] == 6 && v[2] >= 8)) print "yes" }')
 usable=
 for node in /dev/dri/renderD* /dev/dri/card*; do
     if [ -r "$node" ] && [ -w "$node" ]; then
@@ -52,14 +55,26 @@ for node in /dev/dri/renderD* /dev/dri/card*; do
         break
     fi
 done
+if [ -z "$usable" ] && [ -n "$software" ] && [ -r /dev/udmabuf ] &&
+    [ -w /dev/udmabuf ]; then
+    usable=/dev/udmabuf
+fi
 if [ -z "$usable" ]; then
-    if ls /dev/dri/renderD* > /dev/null 2>&1; then
+    if [ -n "$software" ] && [ -e /dev/udmabuf ]; then
+        echo "startplasma.sh: $(id -un) cannot open /dev/udmabuf" \
+            "($(ls -l /dev/udmabuf)), with which KWin renders without a" \
+            "GPU: add the user to its group" >&2
+    elif ls /dev/dri/renderD* > /dev/null 2>&1; then
         echo "startplasma.sh: $(id -un) cannot open the DRM devices" \
             "($(ls -l /dev/dri/renderD* | head -1)); KWin will not be able" \
             "to cast its output: add the user to their groups" >&2
+    elif [ -n "$software" ]; then
+        echo "startplasma.sh: neither /dev/udmabuf nor a DRM render node;" \
+            "KWin needs one of them (modprobe udmabuf)" >&2
     else
-        echo "startplasma.sh: no DRM render node; KWin will not be able to" \
-            "cast its output (without a GPU: modprobe vgem)" >&2
+        echo "startplasma.sh: no DRM render node; KWin before 6.8 will not" \
+            "be able to cast its output (without a GPU: modprobe vgem," \
+            "or KWin 6.8 or later with /dev/udmabuf)" >&2
     fi
 fi
 
