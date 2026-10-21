@@ -113,8 +113,9 @@ run_systemd gnome-systemd xrdp-wlup-mutter /src/wlup/test/mutter/run-e2e-mutter.
 if ls /dev/dri/renderD* > /dev/null 2>&1; then
     run_systemd kde-systemd xrdp-wlup-kde /src/wlup/test/kde/run-e2e-kde.sh &
 else
-    echo "skipped: no DRM render node on the host, which KWin needs to" \
-        "cast its output (without a GPU: sudo modprobe vgem)" \
+    echo "skipped: no DRM render node on the host, which the image's KWin" \
+        "(before 6.8) needs to cast its output (without a GPU: sudo modprobe" \
+        "vgem)" \
         > "$OUT/kde-systemd/skipped.txt"
 fi
 wait
