@@ -61,16 +61,16 @@ jobs:
         with:
           submodules: recursive
 
-      # KWin casts its output only with OpenGL, which takes a DRM render
-      # node: the runner has no GPU, vgem gives it one
+      # KWin casts its output only with OpenGL. The suite's KWin (6.7)
+      # needs a DRM render node for it, which a runner without a GPU gets
+      # only from vgem, and the runners' kernel (linux-azure) is built
+      # without vgem: the suite is skipped there. KWin 6.8 renders in
+      # software with /dev/udmabuf instead, which that kernel has built in.
       - name: Load vgem for the KDE suite
         run: |
-          sudo modprobe vgem || {
-            sudo apt-get update
-            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
-            sudo modprobe vgem
-          }
-          ls -l /dev/dri
+          sudo modprobe vgem ||
+            echo "::notice::no vgem module on this runner: the KDE suite is skipped"
+          ls -l /dev/dri /dev/udmabuf || true
 
       - name: Run all suites
         run: wlup/test/run-all.sh "$RUNNER_TEMP/wlup-test"

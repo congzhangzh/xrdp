@@ -28,8 +28,9 @@
  * from KWin 6.8 to every client that is not sandboxed (Flatpak, Snap),
  * before 6.8 to programs listed in a desktop file or with
  * KWIN_WAYLAND_NO_PERMISSION_CHECKS=1 in KWin's environment, which
- * startplasma.sh sets. Casting also needs KWin to composite with OpenGL;
- * on its virtual backend that takes a DRM render node, or vgem.
+ * startplasma.sh sets. Casting also needs KWin to composite with OpenGL:
+ * KWin 6.8 and later do so in software with /dev/udmabuf, older KWin
+ * needs a DRM render node on its virtual backend (vgem without a GPU).
  *
  * Two file descriptors go into xrdp's poll loop: the Wayland connection
  * and the PipeWire loop.
@@ -185,9 +186,10 @@ stream_failed(void *data, struct zkde_screencast_stream_unstable_v1 *stream,
     LOG(LOG_LEVEL_ERROR, "wlup/kwin: KWin cannot cast the output: %s%s",
         error, strstr(error, "compositing") != NULL ?
         " (KWin composites with OpenGL only when it can open a DRM render "
-        "node: without a GPU, load the vgem module; the user needs the "
-        "node's group, as a session without a seat gets no access from "
-        "logind)" : "");
+        "node, or from KWin 6.8 /dev/udmabuf for software rendering; "
+        "without a GPU, KWin before 6.8 needs the vgem module; the user "
+        "needs the device's group, as a session without a seat gets no "
+        "access from logind)" : "");
     k->stream_failed = 1;
 }
 
