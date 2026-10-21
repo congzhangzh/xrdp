@@ -105,7 +105,7 @@ drive_mic_setup
 connect() {
     ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:$PASSWORD /cert:ignore /size:${W}x${H} \
         /bpp:${BPP:-24} /dynamic-resolution -grab-keyboard /sound:sys:fake ${2:-} \
-        /log-filters:com.freerdp.channels.rdpsnd.client:DEBUG \
+        /log-filters:com.freerdp.channels.rdpsnd.client:DEBUG,com.freerdp.channels.audin.client:DEBUG,com.freerdp.channels.drdynvc.client:DEBUG \
         > "$OUT/client$1.log" 2>&1 &
     CLIENT=$!
 }
@@ -169,9 +169,20 @@ cp "$OUT/client.log" "$OUT/client-audio.log"
 mic_test
 
 # --- resize: make the client window bigger ------------------------------------
+# The client resizes its window only once its display control channel is
+# open, which a loaded host (all suites at once, KWin rendering on the
+# CPU) can delay: ask again until xrdp has resized the output, for up to
+# 90 s. The client's log has the time each dynamic channel was created.
 WID=$(xdotool search --pid $CLIENT | tail -1)
-xdotool windowsize "$WID" 1600 900
-sleep 8
+waited=0
+while ! grep -q "virtual monitor resized to 1600x900" /var/log/xrdp.log &&
+    [ $waited -lt 90 ]; do
+    [ $((waited % 8)) -eq 0 ] && xdotool windowsize "$WID" 1600 900
+    sleep 1
+    waited=$((waited + 1))
+done
+echo "resize: done after ${waited}s"
+sleep 2
 import -window root "$OUT/client-4-resized.png"
 in_session "nohup foot --maximized > /tmp/foot.log 2>&1 &"
 sleep 4
