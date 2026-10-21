@@ -12,8 +12,9 @@
 # user's PipeWire daemon.
 #
 # Plasma needs systemd and logind, and KWin casts its output only with
-# an OpenGL scene, which takes a DRM render node: on a machine without a
-# GPU, load vgem on the host (modprobe vgem). From the host:
+# an OpenGL scene. Debian's KWin (6.7) takes a DRM render node for it: on
+# a machine without a GPU, load vgem on the host (modprobe vgem). KWin
+# 6.8 and later render in software with /dev/udmabuf. From the host:
 #
 #   docker run -d --name kde-e2e --privileged --cgroupns=private \
 #       --tmpfs /run --tmpfs /run/lock -v <xrdp src>:/src:ro -v <out>:/out \
