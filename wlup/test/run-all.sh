@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds the test images and runs every wlup end-to-end suite, in
-# parallel, each in its own container:
+# parallel (KDE's after the others), each in its own container:
 #
 #   sway-no-systemd  sway in a plain container (no init system, no
 #                    logind, no PipeWire), with /dev/fuse for the drive test
@@ -101,7 +101,7 @@ SUITES="sway-no-systemd sway-systemd gnome-systemd kde-systemd"
 for suite in $SUITES; do
     mkdir -p "$OUT/$suite"
 done
-echo "running the suites in parallel, output in $OUT"
+echo "running the suites in parallel, then KDE's, output in $OUT"
 
 docker run --rm --device /dev/fuse --cap-add SYS_ADMIN \
     --security-opt apparmor:unconfined "${CLIENT_ENV[@]}" \
@@ -110,15 +110,18 @@ docker run --rm --device /dev/fuse --cap-add SYS_ADMIN \
              chmod -R a+r /out' &
 run_systemd sway-systemd xrdp-wlup-systemd /src/wlup/test/run-e2e.sh &
 run_systemd gnome-systemd xrdp-wlup-mutter /src/wlup/test/mutter/run-e2e-mutter.sh &
+wait
+# KDE's on its own: KWin renders on the CPU without a GPU, and with all
+# four desktops at once an 8-core host made checks of any suite fail on
+# timing (a dynamic channel opened late, a client that had not connected)
 if ls /dev/dri/renderD* > /dev/null 2>&1; then
-    run_systemd kde-systemd xrdp-wlup-kde /src/wlup/test/kde/run-e2e-kde.sh &
+    run_systemd kde-systemd xrdp-wlup-kde /src/wlup/test/kde/run-e2e-kde.sh
 else
     echo "skipped: no DRM render node on the host, which the image's KWin" \
         "(before 6.8) needs to cast its output (without a GPU: sudo modprobe" \
         "vgem)" \
         > "$OUT/kde-systemd/skipped.txt"
 fi
-wait
 
 # --- summary --------------------------------------------------------------
 status=0
