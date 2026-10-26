@@ -74,6 +74,9 @@
 /* DisplayConfig.ApplyMonitorsConfig: for this session, not saved */
 #define DC_METHOD_TEMPORARY 1
 
+/* Gaps and overlaps between monitors closed for GNOME (apply_layout()) */
+#define SNAP_PIXELS 4
+
 /* ScreenCast cursor mode: the cursor is sent as buffer metadata, not
  * painted into the frames, so the RDP client can draw it locally */
 #define CURSOR_MODE_METADATA 2
@@ -291,6 +294,8 @@ apply_layout(struct wlup *v)
         int width;
         int height;
     } mon[WLUP_MAX_MONITORS], t;
+    int pos_x[WLUP_MAX_MONITORS];
+    int pos_y[WLUP_MAX_MONITORS];
     int count = 0;
     uint32_t serial;
     int primary = 0;
@@ -409,6 +414,33 @@ apply_layout(struct wlup *v)
         }
     }
 
+    /* GNOME takes only monitors that touch ("Logical monitors not
+     * adjacent"). A client's layout can be a pixel off where it splits one
+     * area into monitors (fractions rounded): close such gaps and overlaps
+     * of a few pixels. Only GNOME's positions move: each output still
+     * copies to its monitor's rect, and input goes by EIS region */
+    for (i = 0; i < count; ++i)
+    {
+        pos_x[i] = m->out[i].x;
+        pos_y[i] = m->out[i].y;
+        for (j = 0; j < i; ++j)
+        {
+            int right = pos_x[j] + m->out[j].width;
+            int bottom = pos_y[j] + m->out[j].height;
+
+            if (abs(pos_x[i] - right) <= SNAP_PIXELS &&
+                    pos_y[i] < bottom && pos_y[i] + m->out[i].height > pos_y[j])
+            {
+                pos_x[i] = right;
+            }
+            else if (abs(pos_y[i] - bottom) <= SNAP_PIXELS &&
+                     pos_x[i] < right && pos_x[i] + m->out[i].width > pos_x[j])
+            {
+                pos_y[i] = bottom;
+            }
+        }
+    }
+
     sd_bus_message_new_method_call(m->bus, &msg, DC_NAME, DC_PATH, DC_NAME,
                                    "ApplyMonitorsConfig");
     sd_bus_message_append(msg, "uu", serial, (uint32_t)DC_METHOD_TEMPORARY);
@@ -416,8 +448,8 @@ apply_layout(struct wlup *v)
     for (i = 0; i < count; ++i)
     {
         sd_bus_message_open_container(msg, 'r', "iiduba(ssa{sv})");
-        sd_bus_message_append(msg, "iidub", (int32_t)m->out[i].x,
-                              (int32_t)m->out[i].y, 1.0, (uint32_t)0,
+        sd_bus_message_append(msg, "iidub", (int32_t)pos_x[i],
+                              (int32_t)pos_y[i], 1.0, (uint32_t)0,
                               i == primary);
         sd_bus_message_open_container(msg, 'a', "(ssa{sv})");
         sd_bus_message_append(msg, "(ssa{sv})", mon[i].connector,
