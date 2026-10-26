@@ -177,6 +177,8 @@ struct wlup
     char display_name[256]; /* WAYLAND_DISPLAY name or absolute path */
     char xkb_layout[64];
     char xkb_variant[64];
+    int max_fps;            /* Mutter and KWin backends: the most frames a
+                               second the compositor renders, 0 for 60 */
     enum wlup_backend backend;
     const struct wlup_backend_ops *ops; /* the backend, set on connect */
     char dbus_address[256]; /* Mutter backend: session bus, if not default */

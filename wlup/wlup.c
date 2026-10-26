@@ -454,6 +454,10 @@ lib_mod_set_param(struct wlup *v, const char *name, const char *value)
     {
         g_strncpy(v->xkb_variant, value, sizeof(v->xkb_variant) - 1);
     }
+    else if (g_strcasecmp(name, "max_fps") == 0)
+    {
+        v->max_fps = MAX(0, MIN(g_atoi(value), 240));
+    }
     else if (g_strcasecmp(name, "backend") == 0)
     {
         v->backend = g_strcasecmp(value, "mutter") == 0 ? WLUP_BACKEND_MUTTER

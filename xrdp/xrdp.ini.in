@@ -299,6 +299,9 @@ normal_frame_interval=40
 #port=-1
 #code=32
 #backend=kwin
+; GNOME and KDE render each monitor at up to 60 frames a second, on the
+; CPU when the host has no GPU: a lower rate costs less there
+#max_fps=30
 
 [Xvnc]
 name=Xvnc
