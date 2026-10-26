@@ -136,9 +136,10 @@ struct wlup_mutter
     char *sc_session_path;
     int closed;
 
-    /* A virtual monitor per RDP monitor, left to right. out[0]'s pwc owns
-     * the PipeWire connection; with one output it sizes the desktop image
-     * itself, with more the backend does (wlup_pwc_place()) */
+    /* A virtual monitor per RDP monitor, the client's primary first
+     * (sort_monitors()). out[0]'s pwc owns the PipeWire connection; with
+     * one output it sizes the desktop image itself, with more the backend
+     * does (wlup_pwc_place()) */
     struct mutter_output out[WLUP_MAX_MONITORS];
     int num_out;
     int box_width;  /* the desktop image the outputs are placed in */
@@ -523,8 +524,24 @@ on_output_sized(void *data)
 }
 
 /******************************************************************************/
-/* Sorts monitors left to right, then top to bottom: Mutter lines up its
- * virtual monitors in the order they are made */
+/* Whether monitor a goes after b: the client's primary monitor first, then
+ * left to right, top to bottom. The first output is the one there already
+ * (made at connection time, with the one monitor a client starts with):
+ * the session's windows are on it, and they stay on the client's primary
+ * screen when more monitors come; new virtual monitors are the other
+ * screens. Their positions are GNOME's to set (apply_layout()), not the
+ * order they are made in */
+static int
+monitor_after(const struct monitor_info *a, const struct monitor_info *b)
+{
+    if (a->is_primary != b->is_primary)
+    {
+        return b->is_primary;
+    }
+    return a->left > b->left || (a->left == b->left && a->top > b->top);
+}
+
+/* Sorts monitors, the primary first (monitor_after()) */
 static void
 sort_monitors(struct monitor_info *mons, int count)
 {
@@ -535,9 +552,7 @@ sort_monitors(struct monitor_info *mons, int count)
     {
         struct monitor_info t = mons[i];
 
-        for (j = i; j > 0 && (mons[j - 1].left > t.left ||
-                              (mons[j - 1].left == t.left &&
-                               mons[j - 1].top > t.top)); --j)
+        for (j = i; j > 0 && monitor_after(&mons[j - 1], &t); --j)
         {
             mons[j] = mons[j - 1];
         }
