@@ -91,6 +91,9 @@ def mutter(contract, out):
     xml = {}
     xml["RemoteDesktop"] = bus.introspect(RD, rd_root)
     xml["ScreenCast"] = bus.introspect(SC, sc_root)
+    # the client's monitor layout goes to GNOME through DisplayConfig
+    xml["DisplayConfig"] = bus.introspect("org.gnome.Mutter.DisplayConfig",
+                                          "/org/gnome/Mutter/DisplayConfig")
     # The session interfaces live on objects that exist only once a
     # session is made: make one, never start it, and stop it again
     rd_path = bus.call(RD, rd_root, RD, "CreateSession", None, "(o)")[0]

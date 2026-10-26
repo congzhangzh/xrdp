@@ -23,3 +23,8 @@ required org.gnome.Mutter.ScreenCast method CreateSession a{sv} o
 required org.gnome.Mutter.ScreenCast property Version - i
 required org.gnome.Mutter.ScreenCast.Session method RecordVirtual a{sv} o
 required org.gnome.Mutter.ScreenCast.Stream signal PipeWireStreamAdded u -
+optional org.gnome.Mutter.ScreenCast.Stream method Start - -
+optional org.gnome.Mutter.ScreenCast.Stream method Stop - -
+optional org.gnome.Mutter.ScreenCast.Stream property Parameters - a{sv}
+optional org.gnome.Mutter.DisplayConfig method GetCurrentState - ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv}
+optional org.gnome.Mutter.DisplayConfig method ApplyMonitorsConfig uua(iiduba(ssa{sv}))a{sv} -

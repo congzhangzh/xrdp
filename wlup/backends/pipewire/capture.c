@@ -68,6 +68,14 @@ struct wlup_pwc
     int width;
     int height;
     int info_logged; /* the daemon's version */
+    /* Placed by the backend (wlup_pwc_place()): frames go to the desktop
+     * image at x, y, and the backend sizes the image */
+    int x;
+    int y;
+    void (*sized)(void *data);
+    void *sized_data;
+    int full;   /* placed: copy and paint the next frame whole */
+    int shared; /* loop, context and core belong to another stream */
     /* Damage copied while the core wanted no frames (wlup_wants_frames()),
      * painted once it does again: x, y, cx, cy per rect, or one
      * bounding box once they don't fit */
@@ -80,20 +88,23 @@ static int pw_initialised;
 
 /******************************************************************************/
 /* Copies one rectangle of a PipeWire buffer into our desktop copy */
+/* Copies x, y, cx, cy of a buffer (stream coordinates) to the desktop
+ * image, at the stream's place in it */
 static void
-copy_region(struct wlup *v, const uint8_t *src, int src_stride,
+copy_region(struct wlup_pwc *c, const uint8_t *src, int src_stride,
             int x, int y, int cx, int cy)
 {
+    struct wlup *v = c->v;
     int row;
     int dst_stride = v->buffer_width * 4;
 
     x = MAX(x, 0);
     y = MAX(y, 0);
-    cx = MIN(cx, v->buffer_width - x);
-    cy = MIN(cy, v->buffer_height - y);
+    cx = MIN(cx, MIN(c->width, v->buffer_width - c->x) - x);
+    cy = MIN(cy, MIN(c->height, v->buffer_height - c->y) - y);
     for (row = y; row < y + cy; ++row)
     {
-        memcpy(v->pixels + (size_t)row * dst_stride + x * 4,
+        memcpy(v->pixels + (size_t)(c->y + row) * dst_stride + (c->x + x) * 4,
                src + (size_t)row * src_stride + x * 4, (size_t)cx * 4);
     }
 }
@@ -124,17 +135,20 @@ add_rect(short *rects, int *num_rects, int x, int y, int cx, int cy)
  * tile row adds one rect. Returns 1 when the rects did not fit (all tiles
  * are still copied) */
 static int
-detect_damage(struct wlup *v, const uint8_t *src, int src_stride,
+detect_damage(struct wlup_pwc *c, const uint8_t *src, int src_stride,
               int width, int height, short *rects, int *num_rects)
 {
+    struct wlup *v = c->v;
+    const char *dst = v->pixels + (size_t)c->y * v->buffer_width * 4 +
+                      c->x * 4;
     int dst_stride = v->buffer_width * 4;
     int overflow = 0;
     int tx;
     int ty;
     int row;
 
-    width = MIN(width, v->buffer_width);
-    height = MIN(height, v->buffer_height);
+    width = MIN(width, v->buffer_width - c->x);
+    height = MIN(height, v->buffer_height - c->y);
     for (ty = 0; ty < height; ty += DETECT_TILE)
     {
         int th = MIN(DETECT_TILE, height - ty);
@@ -147,13 +161,13 @@ detect_damage(struct wlup *v, const uint8_t *src, int src_stride,
 
             for (row = ty; row < ty + th && !dirty; ++row)
             {
-                dirty = memcmp(v->pixels + (size_t)row * dst_stride + tx * 4,
+                dirty = memcmp(dst + (size_t)row * dst_stride + tx * 4,
                                src + (size_t)row * src_stride + tx * 4,
                                (size_t)tw * 4) != 0;
             }
             if (dirty)
             {
-                copy_region(v, src, src_stride, tx, ty, tw, th);
+                copy_region(c, src, src_stride, tx, ty, tw, th);
                 if (run_x < 0)
                 {
                     run_x = tx;
@@ -359,6 +373,21 @@ sort_held(struct wlup_pwc *c)
 }
 
 /******************************************************************************/
+/* The full paint the stream was asked for is done (or held) */
+static void
+painted_full(struct wlup_pwc *c)
+{
+    if (c->sized != NULL)
+    {
+        c->full = 0;
+    }
+    else
+    {
+        c->v->need_full_paint = 0;
+    }
+}
+
+/******************************************************************************/
 static void
 on_process(void *data)
 {
@@ -367,7 +396,11 @@ on_process(void *data)
     struct pw_buffer *pb;
     short rects[WLUP_MAX_DAMAGE * 4];
     int num_rects = 0;
-    int full = v->need_full_paint;
+    /* A placed stream is told by the backend (wlup_pwc_repaint()): the
+     * core's need_full_paint is one flag for all the streams */
+    int full = c->sized != NULL ? c->full : v->need_full_paint;
+    int full_cx = MAX(0, MIN(c->width, v->buffer_width - c->x));
+    int full_cy = MAX(0, MIN(c->height, v->buffer_height - c->y));
     int first;
     int i;
 
@@ -398,7 +431,7 @@ on_process(void *data)
         dm = spa_buffer_find_meta(buf, SPA_META_VideoDamage);
         if (dm == NULL || full)
         {
-            copy_region(v, src, stride, 0, 0, c->width, c->height);
+            copy_region(c, src, stride, 0, 0, c->width, c->height);
             full = 1;
         }
         else
@@ -429,7 +462,7 @@ on_process(void *data)
                     c->who, mx1, my1, mx2, my2);
             }
             first = num_rects;
-            if (detect_damage(v, src, stride, c->width, c->height,
+            if (detect_damage(c, src, stride, c->width, c->height,
                               rects, &num_rects))
             {
                 full = 1;
@@ -449,6 +482,12 @@ on_process(void *data)
             }
         }
         pw_stream_queue_buffer(c->stream, pb);
+    }
+    /* From here on, rects are in the desktop image */
+    for (i = 0; i < num_rects; ++i)
+    {
+        rects[i * 4] += c->x;
+        rects[i * 4 + 1] += c->y;
     }
 
     if (full)
@@ -472,6 +511,12 @@ on_process(void *data)
         LOG(LOG_LEVEL_DEBUG, "wlup: detected damage: %d rects in "
             "%d,%d-%d,%d", num_rects, x1, y1, x2, y2);
     }
+    if (full && (full_cx == 0 || full_cy == 0))
+    {
+        /* The image does not reach this stream (yet): nothing to paint */
+        painted_full(c);
+        return;
+    }
     if (v->suppress_output || (!full && num_rects == 0))
     {
         return;
@@ -484,8 +529,8 @@ on_process(void *data)
          * what changed once xrdp has sent most of it */
         if (full)
         {
-            hold_damage(c, 0, 0, c->width, c->height);
-            v->need_full_paint = 0;
+            hold_damage(c, c->x, c->y, full_cx, full_cy);
+            painted_full(c);
         }
         for (i = 0; i < num_rects && !full; ++i)
         {
@@ -497,8 +542,8 @@ on_process(void *data)
     wlup_begin_update(v);
     if (full)
     {
-        wlup_paint_region(v, 0, 0, c->width, c->height);
-        v->need_full_paint = 0;
+        wlup_paint_region(v, c->x, c->y, full_cx, full_cy);
+        painted_full(c);
     }
     else
     {
@@ -514,8 +559,8 @@ on_process(void *data)
 /******************************************************************************/
 /* Our desktop copy, an anonymous mapping so wlup's free_buffer() can
  * release it like a Wayland shm buffer. return error */
-static int
-alloc_pixels(struct wlup *v, int width, int height)
+int
+wlup_pwc_alloc_pixels(struct wlup *v, int width, int height)
 {
     size_t size = (size_t)width * height * 4;
 
@@ -566,13 +611,19 @@ on_param_changed(void *data, uint32_t id, const struct spa_pod *param)
         info.format == SPA_VIDEO_FORMAT_BGRx ? "BGRx" :
         info.format == SPA_VIDEO_FORMAT_BGRA ? "BGRA" : "other",
         c->width, c->height);
-    if (alloc_pixels(v, c->width, c->height) != 0)
+    if (c->sized != NULL)
+    {
+        /* The backend owns the image and finishes resizes */
+        c->full = 1;
+        c->sized(c->sized_data);
+    }
+    else if (wlup_pwc_alloc_pixels(v, c->width, c->height) != 0)
     {
         LOG(LOG_LEVEL_ERROR, "wlup/%s: out of memory", c->who);
         return;
     }
-    if (v->resize_pending && c->width == v->resize_width &&
-            c->height == v->resize_height)
+    else if (v->resize_pending && c->width == v->resize_width &&
+             c->height == v->resize_height)
     {
         LOG(LOG_LEVEL_INFO, "wlup/%s: virtual monitor resized to %dx%d",
             c->who, c->width, c->height);
@@ -695,14 +746,42 @@ build_enum_format(struct spa_pod_builder *b, int width, int height)
 }
 
 /******************************************************************************/
+/* Creates c's stream on c->core and connects it to the node.
+ * return error */
+static int
+connect_stream(struct wlup_pwc *c, uint32_t node_id, int width, int height)
+{
+    uint8_t pod_buf[1024];
+    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(pod_buf, sizeof(pod_buf));
+    const struct spa_pod *params[1];
+
+    c->stream = pw_stream_new(c->core, "xrdp",
+                              pw_properties_new(PW_KEY_MEDIA_TYPE, "Video",
+                                  PW_KEY_MEDIA_CATEGORY, "Capture",
+                                  PW_KEY_MEDIA_ROLE, "Screen",
+                                  NULL));
+    pw_stream_add_listener(c->stream, &c->stream_listener, &stream_events, c);
+
+    params[0] = build_enum_format(&b, width, height);
+
+    if (pw_stream_connect(c->stream, PW_DIRECTION_INPUT, node_id,
+                          (enum pw_stream_flags)
+                          (PW_STREAM_FLAG_AUTOCONNECT |
+                           PW_STREAM_FLAG_MAP_BUFFERS),
+                          params, 1) < 0)
+    {
+        LOG(LOG_LEVEL_ERROR, "wlup/%s: pw_stream_connect failed", c->who);
+        return 1;
+    }
+    return 0;
+}
+
+/******************************************************************************/
 struct wlup_pwc *
 wlup_pwc_connect(struct wlup *v, const char *who, uint32_t node_id,
                  int width, int height)
 {
     struct wlup_pwc *c;
-    uint8_t pod_buf[1024];
-    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(pod_buf, sizeof(pod_buf));
-    const struct spa_pod *params[1];
 
     if (!pw_initialised)
     {
@@ -741,22 +820,31 @@ wlup_pwc_connect(struct wlup *v, const char *who, uint32_t node_id,
     }
     pw_core_add_listener(c->core, &c->core_listener, &core_events, c);
 
-    c->stream = pw_stream_new(c->core, "xrdp",
-                              pw_properties_new(PW_KEY_MEDIA_TYPE, "Video",
-                                  PW_KEY_MEDIA_CATEGORY, "Capture",
-                                  PW_KEY_MEDIA_ROLE, "Screen",
-                                  NULL));
-    pw_stream_add_listener(c->stream, &c->stream_listener, &stream_events, c);
-
-    params[0] = build_enum_format(&b, width, height);
-
-    if (pw_stream_connect(c->stream, PW_DIRECTION_INPUT, node_id,
-                          (enum pw_stream_flags)
-                          (PW_STREAM_FLAG_AUTOCONNECT |
-                           PW_STREAM_FLAG_MAP_BUFFERS),
-                          params, 1) < 0)
+    if (connect_stream(c, node_id, width, height) != 0)
     {
-        LOG(LOG_LEVEL_ERROR, "wlup/%s: pw_stream_connect failed", who);
+        wlup_pwc_destroy(c);
+        return NULL;
+    }
+    return c;
+}
+
+/******************************************************************************/
+struct wlup_pwc *
+wlup_pwc_connect_more(struct wlup_pwc *first, uint32_t node_id,
+                      int width, int height)
+{
+    struct wlup_pwc *c;
+
+    c = (struct wlup_pwc *)g_malloc(sizeof(struct wlup_pwc), 1);
+    c->v = first->v;
+    c->who = first->who;
+    c->loop = first->loop;
+    c->context = first->context;
+    c->core = first->core;
+    c->shared = 1;
+    c->info_logged = 1;
+    if (connect_stream(c, node_id, width, height) != 0)
+    {
         wlup_pwc_destroy(c);
         return NULL;
     }
@@ -774,6 +862,12 @@ wlup_pwc_destroy(struct wlup_pwc *c)
     if (c->stream != NULL)
     {
         pw_stream_destroy(c->stream);
+    }
+    if (c->shared)
+    {
+        /* The connection is the first stream's */
+        g_free(c);
+        return;
     }
     if (c->core != NULL)
     {
@@ -845,4 +939,34 @@ wlup_pwc_frames_wanted(struct wlup_pwc *c)
     wlup_end_update(v);
     c->num_held = 0;
     c->held_box = 0;
+}
+
+/******************************************************************************/
+void
+wlup_pwc_place(struct wlup_pwc *c, int x, int y,
+               void (*sized)(void *data), void *data)
+{
+    c->x = sized != NULL ? x : 0;
+    c->y = sized != NULL ? y : 0;
+    c->sized = sized;
+    c->sized_data = data;
+    c->full = 1;
+    /* Held rects were in the old place */
+    c->num_held = 0;
+    c->held_box = 0;
+}
+
+/******************************************************************************/
+void
+wlup_pwc_get_size(struct wlup_pwc *c, int *width, int *height)
+{
+    *width = c->width;
+    *height = c->height;
+}
+
+/******************************************************************************/
+void
+wlup_pwc_repaint(struct wlup_pwc *c)
+{
+    c->full = 1;
 }
