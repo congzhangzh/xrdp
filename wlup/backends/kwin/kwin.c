@@ -104,6 +104,38 @@ struct kwin_mode
     int height;
 };
 
+/* An output KWin makes for an RDP monitor after the first one
+ * (stream_virtual_output), and its frames */
+struct kwin_extra
+{
+    struct wlup *v;
+    struct zkde_screencast_stream_unstable_v1 *stream;
+    char name[32];
+    uint32_t node_id;
+    int have_node;
+    struct wlup_pwc *pwc;
+};
+
+/* An RDP monitor: a rect of the desktop image, and of KWin's space */
+struct kwin_out
+{
+    int x;
+    int y;
+    int width;
+    int height;
+    int primary;
+};
+
+/* An output device KWin announced, by name: an extra output's device is
+ * found by the name it was made with */
+struct kwin_device
+{
+    struct kde_output_device_v2 *device;
+    char name[64];
+};
+
+#define MAX_DEVICES 32
+
 struct wlup_kwin
 {
     struct wl_display *display;
@@ -135,6 +167,20 @@ struct wlup_kwin
     int want_width;   /* size of a custom mode not yet announced, or 0 */
     int want_height;
     uint64_t resize_start;
+
+    /* Several monitors: out[0] is the output cast above (stream, pwc),
+     * out[i] for i > 0 the output extra[i] KWin made. With one, the cast
+     * output's stream sizes the desktop image; with more, the backend
+     * does and each stream copies to its monitor's rect of it */
+    struct kwin_out out[WLUP_MAX_MONITORS];
+    struct kwin_extra extra[WLUP_MAX_MONITORS];
+    int num_out;
+    int box_width;
+    int box_height;
+    int layout_state; /* 0 not sent, 1 sent, 2 applied: positions, priority */
+    uint32_t extra_count; /* names the extra outputs: xrdp-<n> */
+    struct kwin_device devices[MAX_DEVICES];
+    int num_devices;
 
     /* Versions KWin offers, 0 for a global it lacks, for the log */
     uint32_t screencast_offered;
@@ -210,6 +256,46 @@ static const struct zkde_screencast_stream_unstable_v1_listener
     .closed = stream_closed,
     .created = stream_created,
     .failed = stream_failed,
+    .serial = stream_serial,
+};
+
+/******************************************************************************/
+/* The streams of the extra outputs */
+static void
+extra_closed(void *data, struct zkde_screencast_stream_unstable_v1 *stream)
+{
+    struct kwin_extra *e = (struct kwin_extra *)data;
+
+    LOG(LOG_LEVEL_INFO, "wlup/kwin: KWin closed the stream of %s", e->name);
+}
+
+static void
+extra_created(void *data, struct zkde_screencast_stream_unstable_v1 *stream,
+              uint32_t node)
+{
+    struct kwin_extra *e = (struct kwin_extra *)data;
+
+    e->node_id = node;
+    e->have_node = 1;
+    LOG(LOG_LEVEL_INFO, "wlup/kwin: %s: PipeWire node %u", e->name, node);
+}
+
+static void
+extra_failed(void *data, struct zkde_screencast_stream_unstable_v1 *stream,
+             const char *error)
+{
+    struct kwin_extra *e = (struct kwin_extra *)data;
+
+    LOG(LOG_LEVEL_ERROR, "wlup/kwin: KWin cannot make the output %s: %s",
+        e->name, error);
+}
+
+static const struct zkde_screencast_stream_unstable_v1_listener
+    extra_listener =
+{
+    .closed = extra_closed,
+    .created = extra_created,
+    .failed = extra_failed,
     .serial = stream_serial,
 };
 
@@ -439,7 +525,6 @@ IGNORE_EVENT(capabilities, uint32_t flags)
 IGNORE_EVENT(overscan, uint32_t overscan)
 IGNORE_EVENT(vrr_policy, uint32_t vrr_policy)
 IGNORE_EVENT(rgb_range, uint32_t rgb_range)
-IGNORE_EVENT(name, const char *name)
 IGNORE_EVENT(high_dynamic_range, uint32_t hdr_enabled)
 IGNORE_EVENT(sdr_brightness, uint32_t sdr_brightness)
 IGNORE_EVENT(wide_color_gamut, uint32_t wcg_enabled)
@@ -464,6 +549,24 @@ IGNORE_EVENT(edr_policy, uint32_t policy)
 IGNORE_EVENT(sharpness, uint32_t sharpness)
 IGNORE_EVENT(priority, uint32_t priority)
 IGNORE_EVENT(auto_brightness, uint32_t enabled)
+
+/******************************************************************************/
+static void
+device_name(void *data, struct kde_output_device_v2 *device, const char *name)
+{
+    struct wlup *v = (struct wlup *)data;
+    struct wlup_kwin *k = KWIN(v);
+    int i;
+
+    for (i = 0; i < k->num_devices; ++i)
+    {
+        if (k->devices[i].device == device)
+        {
+            g_strncpy(k->devices[i].name, name, sizeof(k->devices[i].name) - 1);
+            return;
+        }
+    }
+}
 
 /******************************************************************************/
 static void
@@ -551,7 +654,16 @@ device_removed(void *data, struct kde_output_device_v2 *device)
 {
     struct wlup *v = (struct wlup *)data;
     struct wlup_kwin *k = KWIN(v);
+    int i;
 
+    for (i = 0; i < k->num_devices; ++i)
+    {
+        if (k->devices[i].device == device)
+        {
+            k->devices[i] = k->devices[--k->num_devices];
+            break;
+        }
+    }
     if (device == k->device)
     {
         LOG(LOG_LEVEL_WARNING, "wlup/kwin: the output device was removed");
@@ -613,8 +725,15 @@ registry_device(void *data, struct kde_output_device_registry_v2 *registry,
     struct wlup_kwin *k = KWIN(v);
 
     /* Each device sends its state, then done(); the first one enabled
-     * becomes ours */
+     * becomes ours. The registry goes on announcing outputs made later:
+     * the extra outputs' devices */
     k->device_enabled = 0;
+    if (k->num_devices < MAX_DEVICES)
+    {
+        k->devices[k->num_devices].device = device;
+        k->devices[k->num_devices].name[0] = '\0';
+        ++k->num_devices;
+    }
     kde_output_device_v2_add_listener(device, &device_listener, v);
 }
 
@@ -817,7 +936,8 @@ kwin_mouse(struct wlup *v, int msg, int x, int y)
         return;
     }
 
-    /* The output is the whole of KWin's space, at scale 1 */
+    /* KWin's space at scale 1: the output, or with several monitors the
+     * outputs at the client's positions (send_layout()), the desktop */
     org_kde_kwin_fake_input_pointer_motion_absolute(k->fake_input,
             wl_fixed_from_int(x), wl_fixed_from_int(y));
     if (button != 0)
@@ -838,6 +958,389 @@ kwin_flush(struct wlup *v)
     {
         wl_display_flush(k->display);
     }
+}
+
+/******************************************************************************/
+/* Several monitors                                                           */
+/******************************************************************************/
+static void kwin_out_sized(void *data);
+
+/* Removes extra output i from KWin, and forgets it */
+static void
+close_extra(struct wlup_kwin *k, int i)
+{
+    struct kwin_extra *e = &k->extra[i];
+
+    wlup_pwc_destroy(e->pwc);
+    if (e->stream != NULL)
+    {
+        zkde_screencast_stream_unstable_v1_close(e->stream);
+    }
+    g_memset(e, 0, sizeof(*e));
+}
+
+/* Asks KWin for an output of out[i]'s size, streamed to us. return error */
+static int
+make_extra(struct wlup *v, int i)
+{
+    struct wlup_kwin *k = KWIN(v);
+    struct kwin_extra *e = &k->extra[i];
+
+    if (k->screencast == NULL ||
+            zkde_screencast_unstable_v1_get_version(k->screencast) < 2)
+    {
+        LOG(LOG_LEVEL_WARNING, "wlup/kwin: zkde_screencast_unstable_v1 "
+            "before version 2 makes no outputs: one output for all monitors");
+        return 1;
+    }
+    e->v = v;
+    g_snprintf(e->name, sizeof(e->name), "xrdp-%u", ++k->extra_count);
+    e->stream = zkde_screencast_unstable_v1_stream_virtual_output(
+                    k->screencast, e->name, k->out[i].width, k->out[i].height,
+                    wl_fixed_from_int(1), POINTER_METADATA);
+    zkde_screencast_stream_unstable_v1_add_listener(e->stream,
+            &extra_listener, e);
+    LOG(LOG_LEVEL_INFO, "wlup/kwin: making the output %s, %dx%d", e->name,
+        k->out[i].width, k->out[i].height);
+    return 0;
+}
+
+/* The stream of out[i]: the cast output's for out[0] */
+static struct wlup_pwc *
+out_pwc(struct wlup_kwin *k, int i)
+{
+    return i == 0 ? k->pwc : k->extra[i].pwc;
+}
+
+/* The output device of out[i], or NULL while KWin has not announced it.
+ * KWin names a virtual output Virtual-<the name it was made with> */
+static struct kde_output_device_v2 *
+out_device(struct wlup_kwin *k, int i)
+{
+    const char *want;
+    int j;
+
+    if (i == 0)
+    {
+        return k->device;
+    }
+    want = k->extra[i].name;
+    for (j = 0; j < k->num_devices; ++j)
+    {
+        const char *name = k->devices[j].name;
+
+        if (strcmp(name, want) == 0 ||
+                (strncmp(name, "Virtual-", 8) == 0 &&
+                 strcmp(name + 8, want) == 0))
+        {
+            return k->devices[j].device;
+        }
+    }
+    return NULL;
+}
+
+/* Places every stream in the desktop image: from two monitors on, the
+ * backend owns the image */
+static void
+place_outs(struct wlup *v)
+{
+    struct wlup_kwin *k = KWIN(v);
+    int i;
+
+    for (i = 0; i < k->num_out; ++i)
+    {
+        struct wlup_pwc *c = out_pwc(k, i);
+
+        if (c == NULL)
+        {
+            continue;
+        }
+        if (k->num_out > 1)
+        {
+            wlup_pwc_place(c, k->out[i].x, k->out[i].y, kwin_out_sized, v);
+        }
+        else
+        {
+            wlup_pwc_place(c, 0, 0, NULL, NULL);
+        }
+    }
+}
+
+/* KWin applied the positions and the order of the outputs */
+static void
+layout_applied(void *data, struct kde_output_configuration_v2 *config)
+{
+    struct wlup *v = (struct wlup *)data;
+    struct wlup_kwin *k = KWIN(v);
+
+    kde_output_configuration_v2_destroy(config);
+    k->layout_state = 2;
+    LOG(LOG_LEVEL_INFO, "wlup/kwin: KWin has the client's layout");
+    kwin_out_sized(v);
+}
+
+static void
+layout_failed(void *data, struct kde_output_configuration_v2 *config)
+{
+    struct wlup *v = (struct wlup *)data;
+    struct wlup_kwin *k = KWIN(v);
+
+    LOG(LOG_LEVEL_WARNING, "wlup/kwin: KWin did not take the client's "
+        "layout: the outputs stay where KWin put them");
+    kde_output_configuration_v2_destroy(config);
+    k->layout_state = 2;
+    kwin_out_sized(v);
+}
+
+static const struct kde_output_configuration_v2_listener layout_listener =
+{
+    .applied = layout_applied,
+    .failed = layout_failed,
+    .failure_reason = config_failure_reason,
+};
+
+/* Gives KWin the client's layout once every output's device is known:
+ * the positions (KWin's space is then the desktop image, which is what
+ * fake input's absolute positions are in) and the order, the client's
+ * primary monitor first (Plasma's panel goes there) */
+static void
+send_layout(struct wlup *v)
+{
+    struct wlup_kwin *k = KWIN(v);
+    struct kde_output_configuration_v2 *config;
+    int prio = 2;
+    int i;
+
+    if (k->layout_state != 0 || k->management == NULL)
+    {
+        return;
+    }
+    for (i = 0; i < k->num_out; ++i)
+    {
+        if (out_device(k, i) == NULL)
+        {
+            return;
+        }
+    }
+    config = kde_output_management_v2_create_configuration(k->management);
+    kde_output_configuration_v2_add_listener(config, &layout_listener, v);
+    for (i = 0; i < k->num_out; ++i)
+    {
+        struct kde_output_device_v2 *d = out_device(k, i);
+
+        kde_output_configuration_v2_position(config, d, k->out[i].x,
+                                             k->out[i].y);
+        kde_output_configuration_v2_set_priority(config, d,
+                k->out[i].primary ? 1 : prio++);
+    }
+    kde_output_configuration_v2_apply(config);
+    k->layout_state = 1;
+    wl_display_flush(k->display);
+}
+
+/* With several monitors: once each stream has its monitor's size and
+ * KWin has the layout, the image is the new desktop and xrdp's resize is
+ * finished */
+static void
+kwin_out_sized(void *data)
+{
+    struct wlup *v = (struct wlup *)data;
+    struct wlup_kwin *k = KWIN(v);
+    int i;
+
+    if (k->num_out < 2)
+    {
+        return;
+    }
+    for (i = 0; i < k->num_out; ++i)
+    {
+        struct wlup_pwc *c = out_pwc(k, i);
+        int w;
+        int h;
+
+        if (c == NULL)
+        {
+            return;
+        }
+        wlup_pwc_get_size(c, &w, &h);
+        if (w != k->out[i].width || h != k->out[i].height)
+        {
+            return;
+        }
+    }
+    send_layout(v);
+    if (k->layout_state != 2)
+    {
+        return;
+    }
+    if (v->pixels == NULL || v->buffer_width != k->box_width ||
+            v->buffer_height != k->box_height)
+    {
+        if (wlup_pwc_alloc_pixels(v, k->box_width, k->box_height) != 0)
+        {
+            return;
+        }
+    }
+    for (i = 0; i < k->num_out; ++i)
+    {
+        wlup_pwc_repaint(out_pwc(k, i));
+    }
+    if (v->resize_pending)
+    {
+        LOG(LOG_LEVEL_INFO, "wlup/kwin: %d outputs resized, desktop %dx%d",
+            k->num_out, k->box_width, k->box_height);
+        wlup_resize_finished(v);
+    }
+}
+
+/* Receives the frames of extra outputs KWin has made since the last poll */
+static void
+connect_extras(struct wlup *v)
+{
+    struct wlup_kwin *k = KWIN(v);
+    int i;
+
+    for (i = 1; i < k->num_out; ++i)
+    {
+        struct kwin_extra *e = &k->extra[i];
+
+        if (e->pwc != NULL || !e->have_node || k->pwc == NULL)
+        {
+            continue;
+        }
+        e->pwc = wlup_pwc_connect_more(k->pwc, e->node_id, k->out[i].width,
+                                       k->out[i].height);
+        if (e->pwc != NULL)
+        {
+            wlup_pwc_place(e->pwc, k->out[i].x, k->out[i].y, kwin_out_sized,
+                           v);
+        }
+    }
+    /* devices announced since: the layout may go now */
+    if (k->num_out > 1 && k->layout_state == 0)
+    {
+        kwin_out_sized(v);
+    }
+}
+
+/* Sorts monitors left to right, then top to bottom */
+static void
+sort_monitors(struct monitor_info *mons, int count)
+{
+    int i;
+    int j;
+
+    for (i = 1; i < count; ++i)
+    {
+        struct monitor_info t = mons[i];
+
+        for (j = i; j > 0 && (mons[j - 1].left > t.left ||
+                              (mons[j - 1].left == t.left &&
+                               mons[j - 1].top > t.top)); --j)
+        {
+            mons[j] = mons[j - 1];
+        }
+        mons[j] = t;
+    }
+}
+
+static int kwin_resize(struct wlup *v, int width, int height);
+
+/* An output per RDP monitor: the cast output for the first (left to
+ * right), an output KWin makes for each other one. KWin's outputs keep
+ * the size they were made with, so an extra output whose monitor changed
+ * size is made again */
+static int
+kwin_resize_monitors(struct wlup *v, int width, int height, int num_monitors,
+                     const struct monitor_info *monitors)
+{
+    struct wlup_kwin *k = KWIN(v);
+    struct monitor_info mons[WLUP_MAX_MONITORS];
+    int pending = 0;
+    int i;
+
+    if (k == NULL || k->pwc == NULL)
+    {
+        return 0;
+    }
+    num_monitors = MIN(num_monitors, WLUP_MAX_MONITORS);
+    for (i = 0; i < num_monitors; ++i)
+    {
+        mons[i] = monitors[i];
+    }
+    sort_monitors(mons, num_monitors);
+    if (num_monitors <= 1 && k->num_out <= 1)
+    {
+        if (width == v->buffer_width && height == v->buffer_height)
+        {
+            return 0;
+        }
+        return kwin_resize(v, width, height);
+    }
+    for (i = MAX(num_monitors, 1); i < k->num_out; ++i)
+    {
+        close_extra(k, i);
+    }
+    k->box_width = width;
+    k->box_height = height;
+    for (i = 0; i < num_monitors; ++i)
+    {
+        int w = mons[i].right - mons[i].left + 1;
+        int h = mons[i].bottom - mons[i].top + 1;
+
+        if (i > 0 && k->extra[i].stream != NULL &&
+                (w != k->out[i].width || h != k->out[i].height))
+        {
+            close_extra(k, i);
+        }
+        k->out[i].x = mons[i].left;
+        k->out[i].y = mons[i].top;
+        k->out[i].width = w;
+        k->out[i].height = h;
+        k->out[i].primary = mons[i].is_primary;
+        if (i == 0)
+        {
+            int cw;
+            int ch;
+
+            wlup_pwc_get_size(k->pwc, &cw, &ch);
+            if ((cw != w || ch != h) && request_output_size(v, w, h))
+            {
+                pending = 1;
+            }
+        }
+        else if (k->extra[i].stream == NULL)
+        {
+            if (make_extra(v, i) != 0)
+            {
+                num_monitors = i;
+                break;
+            }
+            pending = 1;
+        }
+    }
+    k->num_out = MAX(num_monitors, 1);
+    k->layout_state = 0;
+    LOG(LOG_LEVEL_INFO, "wlup/kwin: %d output%s in %dx%d", k->num_out,
+        k->num_out > 1 ? "s" : "", width, height);
+    place_outs(v);
+    if (wlup_pwc_alloc_pixels(v, width, height) != 0)
+    {
+        return 0;
+    }
+    if (k->num_out == 1)
+    {
+        /* Back to one: the cast output's stream sizes the image again */
+        if (!pending)
+        {
+            return 0;
+        }
+        k->resize_start = monotonic_usec();
+        return 1;
+    }
+    wl_display_flush(k->display);
+    k->resize_start = monotonic_usec();
+    return 1;
 }
 
 /******************************************************************************/
@@ -992,6 +1495,18 @@ kwin_connect(struct wlup *v, int fd)
             request_output_size(v, v->server_width, v->server_height);
         }
     }
+    k->num_out = 1;
+    {
+        /* A multi-monitor client: an output per monitor from the start */
+        const struct display_size_description *ds =
+                v->client_info != NULL ? &v->client_info->display_sizes : NULL;
+
+        if (ds != NULL && ds->monitorCount > 1)
+        {
+            kwin_resize_monitors(v, v->server_width, v->server_height,
+                                 ds->monitorCount, ds->minfo_wm);
+        }
+    }
     wl_display_flush(k->display);
 
     g_snprintf(text, sizeof(text), "wlup: connected to KWin, PipeWire node "
@@ -1011,6 +1526,11 @@ kwin_disconnect(struct wlup *v)
     if (k == NULL)
     {
         return;
+    }
+    /* the extra streams use the cast output's PipeWire connection */
+    for (i = 1; i < k->num_out; ++i)
+    {
+        close_extra(k, i);
     }
     wlup_pwc_destroy(k->pwc);
     wlup_wlr_clip_destroy(k->clip);
@@ -1100,6 +1620,7 @@ kwin_check_wait_objs(struct wlup *v)
 {
     struct wlup_kwin *k = KWIN(v);
     struct pollfd pfd;
+    int i;
 
     if (k == NULL || k->display == NULL)
     {
@@ -1137,8 +1658,22 @@ kwin_check_wait_objs(struct wlup *v)
         return 1;
     }
 
+    connect_extras(v);
+    if (k->num_out > 1 && v->need_full_paint)
+    {
+        /* One flag for the core; each stream paints its own part */
+        for (i = 0; i < k->num_out; ++i)
+        {
+            if (out_pwc(k, i) != NULL)
+            {
+                wlup_pwc_repaint(out_pwc(k, i));
+            }
+        }
+        v->need_full_paint = 0;
+    }
     if (k->pwc != NULL)
     {
+        /* every stream's frames come through this loop */
         wlup_pwc_process(k->pwc);
     }
     if (v->resize_pending &&
@@ -1172,9 +1707,14 @@ kwin_frames_wanted(struct wlup *v)
 {
     struct wlup_kwin *k = KWIN(v);
 
-    if (k != NULL && k->pwc != NULL)
+    int i;
+
+    for (i = 0; k != NULL && i < k->num_out; ++i)
     {
-        wlup_pwc_frames_wanted(k->pwc);
+        if (out_pwc(k, i) != NULL)
+        {
+            wlup_pwc_frames_wanted(out_pwc(k, i));
+        }
     }
 }
 
@@ -1203,6 +1743,7 @@ static const struct wlup_backend_ops kwin_ops =
     .key = kwin_key,
     .mouse = kwin_mouse,
     .resize = kwin_resize,
+    .resize_monitors = kwin_resize_monitors,
     .frames_wanted = kwin_frames_wanted,
     .flush = kwin_flush,
     .set_clipboard_text = kwin_set_clipboard_text
