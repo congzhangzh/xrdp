@@ -62,4 +62,35 @@ wlup_pwc_set_size(struct wlup_pwc *c, int width, int height);
 void
 wlup_pwc_frames_wanted(struct wlup_pwc *c);
 
+/* Several streams, one per monitor (Mutter's virtual monitors) --------- */
+
+/* Another stream on first's PipeWire connection, polled through first's
+ * fd (wlup_pwc_process(first) handles both). Destroy it before first.
+ * return NULL on error */
+struct wlup_pwc *
+wlup_pwc_connect_more(struct wlup_pwc *first, uint32_t node_id,
+                      int width, int height);
+
+/* From now on this stream's frames go to the desktop image at x, y, and
+ * the backend owns the image: a new stream format no longer resizes it,
+ * sized(data) is called instead, and the backend finishes the resize.
+ * sized NULL: back to one stream that sizes the image itself */
+void
+wlup_pwc_place(struct wlup_pwc *c, int x, int y,
+               void (*sized)(void *data), void *data);
+
+/* The size of the stream's current format, 0 x 0 before the first */
+void
+wlup_pwc_get_size(struct wlup_pwc *c, int *width, int *height);
+
+/* The next frame of a placed stream is copied and painted whole: the
+ * backend's image was reallocated, or the core wants a full paint */
+void
+wlup_pwc_repaint(struct wlup_pwc *c);
+
+/* A desktop image of width x height, cleared; for a backend that owns
+ * it (wlup_pwc_place()). return error */
+int
+wlup_pwc_alloc_pixels(struct wlup *v, int width, int height);
+
 #endif

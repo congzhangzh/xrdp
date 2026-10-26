@@ -629,14 +629,47 @@ lib_mod_server_monitor_resize(struct wlup *v, int width, int height,
                               const struct monitor_info *monitors,
                               int *in_progress)
 {
-    /* Prototype: all monitors become one output of the total size */
+    struct monitor_info mons[CLIENT_MONITOR_DATA_MAXIMUM_MONITORS];
+    int started;
+
     v->server_width = width;
     v->server_height = height;
     v->need_full_paint = 1;
     wlup_gfx_reset(v);
     *in_progress = 0;
-    if ((width != v->buffer_width || height != v->buffer_height) &&
-            v->ops != NULL && v->ops->resize(v, width, height))
+    if (v->ops != NULL && v->ops->resize_monitors != NULL &&
+            num_monitors > 0 && monitors != NULL)
+    {
+        /* An output per monitor. xrdp's monitors may start left of or
+         * above 0: move them into the desktop, as minfo_wm is */
+        int min_x = monitors[0].left;
+        int min_y = monitors[0].top;
+        int i;
+
+        num_monitors = MIN(num_monitors, CLIENT_MONITOR_DATA_MAXIMUM_MONITORS);
+        for (i = 1; i < num_monitors; ++i)
+        {
+            min_x = MIN(min_x, monitors[i].left);
+            min_y = MIN(min_y, monitors[i].top);
+        }
+        for (i = 0; i < num_monitors; ++i)
+        {
+            mons[i] = monitors[i];
+            mons[i].left -= min_x;
+            mons[i].right -= min_x;
+            mons[i].top -= min_y;
+            mons[i].bottom -= min_y;
+        }
+        started = v->ops->resize_monitors(v, width, height, num_monitors,
+                                          mons);
+    }
+    else
+    {
+        /* All monitors become one output of the total size */
+        started = (width != v->buffer_width || height != v->buffer_height) &&
+                  v->ops != NULL && v->ops->resize(v, width, height);
+    }
+    if (started)
     {
         /* xrdp waits for server_monitor_resize_done() */
         v->resize_width = width;

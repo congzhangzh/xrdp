@@ -29,6 +29,7 @@
 #include "arch.h"
 
 struct wlup;
+struct monitor_info;
 
 /* bus_fd: connection to the session bus made for us by sesman, or -1
  * to connect ourselves. return error */
@@ -51,6 +52,14 @@ wlup_mutter_check_wait_objs(struct wlup *v);
  * return 1 if the request was made, 0 if not */
 int
 wlup_mutter_resize(struct wlup *v, int width, int height);
+
+/* Asks Mutter for a virtual monitor per RDP monitor (monitors[] are
+ * rects of the width x height desktop); see wlup_backend.h.
+ * return 1 if a resize is under way, 0 if done or not possible */
+int
+wlup_mutter_resize_monitors(struct wlup *v, int width, int height,
+                            int num_monitors,
+                            const struct monitor_info *monitors);
 
 /* evdev_code: Linux input event code of the key */
 void
