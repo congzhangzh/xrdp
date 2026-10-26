@@ -318,6 +318,58 @@ START_TEST(test_resize_to_same_size)
 }
 END_TEST
 
+/* A backend with an output per monitor: what resize_monitors() was given */
+static int monitor_resizes;
+static int last_num_monitors;
+static struct monitor_info last_monitors[2];
+
+static int
+mock_resize_monitors(struct wlup *v, int width, int height, int num_monitors,
+                     const struct monitor_info *monitors)
+{
+    ++monitor_resizes;
+    last_num_monitors = num_monitors;
+    memcpy(last_monitors, monitors,
+           sizeof(last_monitors[0]) * (num_monitors < 2 ? num_monitors : 2));
+    return 0;
+}
+
+/* One wide monitor becoming two at the same total size is a resize for a
+ * backend with an output per monitor; xrdp's monitors left of 0 are moved
+ * into the desktop, which starts at 0 */
+START_TEST(test_resize_monitors_same_size)
+{
+    /* static: teardown still calls the backend through it */
+    static struct wlup_backend_ops ops;
+    struct monitor_info mons[2];
+    int in_progress = -1;
+
+    ops = *v->ops;
+    ops.resize_monitors = mock_resize_monitors;
+    v->ops = &ops;
+    monitor_resizes = 0;
+    memset(mons, 0, sizeof(mons));
+    /* the primary on the right, the other one left of it, at -32 */
+    mons[0].left = 0;
+    mons[0].right = 31;
+    mons[0].bottom = 47;
+    mons[0].is_primary = 1;
+    mons[1].left = -32;
+    mons[1].right = -1;
+    mons[1].bottom = 47;
+    v->mod_server_monitor_resize(v, 64, 48, 2, mons, &in_progress);
+    ck_assert_int_eq(monitor_resizes, 1);
+    ck_assert_int_eq(mock.resizes, 0);
+    ck_assert_int_eq(in_progress, 0);
+    ck_assert_int_eq(last_num_monitors, 2);
+    ck_assert_int_eq(last_monitors[0].left, 32);
+    ck_assert_int_eq(last_monitors[0].right, 63);
+    ck_assert_int_eq(last_monitors[0].is_primary, 1);
+    ck_assert_int_eq(last_monitors[1].left, 0);
+    ck_assert_int_eq(last_monitors[1].right, 31);
+}
+END_TEST
+
 /******************************************************************************/
 Suite *
 make_suite_wlup_core(void)
@@ -343,6 +395,7 @@ make_suite_wlup_core(void)
     tcase_add_test(tc, test_resize_in_progress);
     tcase_add_test(tc, test_resize_unsupported);
     tcase_add_test(tc, test_resize_to_same_size);
+    tcase_add_test(tc, test_resize_monitors_same_size);
     suite_add_tcase(s, tc);
     return s;
 }

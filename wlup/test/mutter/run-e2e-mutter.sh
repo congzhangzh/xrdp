@@ -217,6 +217,57 @@ xdotool key Return
 sleep 2
 import -window root "$OUT/client-8-h264-typed.png"
 
+# --- two monitors: a GNOME virtual monitor per RDP monitor --------------
+# The client runs on an Xorg with two 800x600 monitors side by side
+# (xorg-2mon.conf) and sends both with /multimon, so GNOME must get two
+# monitors, not one 1600x600: a window maximized on the right monitor
+# fills the right half only, and input there reaches it
+kill $CLIENT 2>/dev/null || true
+in_session "pkill -x foot" || true
+sleep 3
+Xorg :98 -noreset -extension RANDR -config "$SRC/wlup/test/xorg-2mon.conf" \
+    -logfile "$OUT/xorg-2mon.log" > /dev/null 2>&1 &
+sleep 2
+DISPLAY=:98 ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:$PASSWORD \
+    /cert:ignore /multimon /bpp:32 /gfx:AVC420 -grab-keyboard \
+    > "$OUT/client-2mon.log" 2>&1 &
+CLIENT=$!
+for _ in $(seq 30); do
+    [ "$(grep -c "wlup: connected to Mutter" /var/log/xrdp.log)" -ge 4 ] && break
+    sleep 1
+done
+sleep 4
+in_session "gdbus call --session --dest org.gnome.Mutter.DisplayConfig \
+    --object-path /org/gnome/Mutter/DisplayConfig \
+    --method org.gnome.Mutter.DisplayConfig.GetCurrentState" \
+    > "$OUT/displayconfig-2mon.txt" 2>&1 || true
+# the logical monitors: ((x, y, scale, transform, primary, [(connector, ...)], ...)
+python3 -I - "$OUT/displayconfig-2mon.txt" > "$OUT/logical-2mon.txt" <<'PY' || true
+import re, sys
+text = open(sys.argv[1]).read()
+# (GVariant names the transform's type in the first tuple only)
+for x, y, primary in re.findall(r"\((-?\d+), (-?\d+), [\d.]+, (?:uint32 )?\d+, (true|false), \[\('", text):
+    print(x, y, primary)
+PY
+# a terminal maximized on the monitor the pointer is on, the right one
+DISPLAY=:98 xdotool mousemove 1200 300
+sleep 1
+in_session "nohup foot --maximized > /tmp/foot.log 2>&1 &"
+sleep 4
+DISPLAY=:98 import -window root "$OUT/client-9-2mon-maximized.png"
+DISPLAY=:98 xdotool mousemove 1200 300 click 1
+sleep 1
+DISPLAY=:98 xdotool type --delay 80 'echo twomon-$((6*7)) > /tmp/typed-2mon.txt'
+DISPLAY=:98 xdotool key Return
+sleep 2
+DISPLAY=:98 import -window root "$OUT/client-10-2mon-typed.png"
+# foot's background, as the picture shows it: the right half is all of
+# it, the left half none
+pixel() { convert "$OUT/client-9-2mon-maximized.png" -format "%[pixel:p{$1}]" info:; }
+FOOT_BG=$(pixel 1500,500)
+echo "two monitors: foot $FOOT_BG at 1500,500, left monitor $(pixel 100,500) $(pixel 795,590)," \
+    "right monitor's corners $(pixel 805,590) $(pixel 1595,590)"
+
 # --- API contract: what Mutter offers against what the backend calls --------
 API_OK=0
 in_session "python3 -I $SRC/wlup/test/api/api-contract.py mutter \
@@ -314,6 +365,16 @@ check "h264: colours match the planar picture (PSNR > 35 dB)" \
     'awk -v p="$H264_PSNR" "BEGIN { exit !(p == \"inf\" || p + 0 > 35) }"'
 check "h264: input works" \
     '[ "$(cat /tmp/typed4.txt 2>/dev/null)" = h264-42 ]'
+check "two monitors: a virtual monitor for each" \
+    'grep -q "wlup/mutter: virtual monitor 1: 800x600+800+0" /var/log/xrdp.log &&
+     grep -q "EIS region 1: 800x600" /var/log/xrdp.log'
+check "two monitors: GNOME has two logical monitors side by side" \
+    '[ "$(cut -d" " -f1,2 "$OUT/logical-2mon.txt" | sort -n | tr "\n" " ")" = "0 0 800 0 " ]'
+check "two monitors: a maximized window fills the right monitor only" \
+    '[ "$(pixel 805,590)" = "$FOOT_BG" ] && [ "$(pixel 1595,590)" = "$FOOT_BG" ] &&
+     [ "$(pixel 795,590)" != "$FOOT_BG" ] && [ "$(pixel 100,500)" != "$FOOT_BG" ]'
+check "two monitors: input on the right monitor reaches it" \
+    '[ "$(cat /tmp/typed-2mon.txt 2>/dev/null)" = twomon-42 ]'
 echo "passed $pass, failed $fail"
 
 kill $CLIENT 2>/dev/null || true
