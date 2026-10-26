@@ -229,6 +229,51 @@ import -window root "$OUT/client-9-h264-typed.png"
 
 in_session "journalctl --user --no-pager -o cat" > "$OUT/user-journal.log" 2>&1 || true
 
+# --- two monitors: a KWin output per RDP monitor ------------------------
+# The client runs on an Xorg with two 800x600 monitors side by side
+# (xorg-2mon.conf) and sends both with /multimon: KWin must get two
+# outputs at the client's positions, the client's primary (the left one)
+# first; a window maximized on the right monitor fills the right half
+# only, and input there reaches it
+kill $CLIENT 2>/dev/null || true
+in_session "pkill -x foot" || true
+sleep 3
+Xorg :98 -noreset -extension RANDR -config "$SRC/wlup/test/xorg-2mon.conf" \
+    -logfile "$OUT/xorg-2mon.log" > /dev/null 2>&1 &
+sleep 2
+DISPLAY=:98 ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:$PASSWORD \
+    /cert:ignore /multimon /bpp:32 /gfx:AVC420 -grab-keyboard \
+    > "$OUT/client-2mon.log" 2>&1 &
+CLIENT=$!
+wait_connected 4 30
+sleep 8
+in_session "kscreen-doctor -j" > "$OUT/kscreen-2mon.json" 2>&1 || true
+# the enabled outputs: x y width height priority, left to right
+python3 -I - "$OUT/kscreen-2mon.json" > "$OUT/outputs-2mon.txt" <<'PY' || true
+import json, sys
+text = open(sys.argv[1]).read()
+# Qt may warn about the locale on stdout before the JSON
+outs = [o for o in json.loads(text[text.index("{"):])["outputs"] if o.get("enabled")]
+for o in sorted(outs, key=lambda o: o["pos"]["x"]):
+    print(o["pos"]["x"], o["pos"]["y"], o["size"]["width"], o["size"]["height"], o.get("priority"))
+PY
+# a terminal maximized on the monitor the pointer is on, the right one
+DISPLAY=:98 xdotool mousemove 1200 300
+sleep 1
+in_session "nohup foot --maximized > /tmp/foot.log 2>&1 &"
+sleep 4
+DISPLAY=:98 import -window root "$OUT/client-10-2mon-maximized.png"
+DISPLAY=:98 xdotool mousemove 1200 300 click 1
+sleep 1
+DISPLAY=:98 xdotool type --delay 80 'echo twomon-$((6*7)) > /tmp/typed-2mon.txt'
+DISPLAY=:98 xdotool key Return
+sleep 2
+DISPLAY=:98 import -window root "$OUT/client-11-2mon-typed.png"
+pixel() { convert "$OUT/client-10-2mon-maximized.png" -format "%[pixel:p{$1}]" info:; }
+FOOT_BG=$(pixel 1500,500)
+echo "two monitors: foot $FOOT_BG at 1500,500, left monitor $(pixel 100,500) $(pixel 795,590)," \
+    "right monitor's corners $(pixel 805,590) $(pixel 1595,590)"
+
 # --- API contract: what KWin offers against what the backend binds --------
 API_OK=0
 in_session "python3 -I $SRC/wlup/test/api/api-contract.py kwin \
@@ -303,6 +348,17 @@ check "h264: every frame acknowledged in time (no ack timeout)" \
     '! grep -q "wlup: no ack for frame" /var/log/xrdp.log'
 check "h264: client shows more than a flat screen" \
     '[ "$(convert "$OUT/client-8-h264.png" -format %k info:)" -gt 50 ]'
+check "two monitors: an output for each, at the client's positions" \
+    'grep -q "wlup/kwin: making the output xrdp-[0-9]*, 800x600" /var/log/xrdp.log &&
+     grep -q "wlup/kwin: KWin has the client.s layout" /var/log/xrdp.log &&
+     [ "$(cut -d" " -f1-4 "$OUT/outputs-2mon.txt" | tr "\n" " ")" = "0 0 800 600 800 0 800 600 " ]'
+check "two monitors: the client's primary (left) monitor first" \
+    '[ "$(head -1 "$OUT/outputs-2mon.txt" | cut -d" " -f5)" = 1 ]'
+check "two monitors: a maximized window fills the right monitor only" \
+    '[ "$(pixel 805,590)" = "$FOOT_BG" ] && [ "$(pixel 1595,590)" = "$FOOT_BG" ] &&
+     [ "$(pixel 795,590)" != "$FOOT_BG" ] && [ "$(pixel 100,500)" != "$FOOT_BG" ]'
+check "two monitors: input on the right monitor reaches it" \
+    '[ "$(cat /tmp/typed-2mon.txt 2>/dev/null)" = twomon-42 ]'
 check "h264: input works" \
     '[ "$(cat /tmp/typed4.txt 2>/dev/null)" = h264-42 ]'
 echo "passed $pass, failed $fail"
