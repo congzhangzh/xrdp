@@ -1223,7 +1223,22 @@ connect_extras(struct wlup *v)
     }
 }
 
-/* Sorts monitors left to right, then top to bottom */
+/* Whether monitor a goes after b: the client's primary monitor first, then
+ * left to right, top to bottom. The first output is the cast one, where the
+ * session's windows are: they stay on the client's primary screen when
+ * more monitors come; KWin makes outputs for the other screens, and
+ * send_layout() gives every output its position */
+static int
+monitor_after(const struct monitor_info *a, const struct monitor_info *b)
+{
+    if (a->is_primary != b->is_primary)
+    {
+        return b->is_primary;
+    }
+    return a->left > b->left || (a->left == b->left && a->top > b->top);
+}
+
+/* Sorts monitors, the primary first (monitor_after()) */
 static void
 sort_monitors(struct monitor_info *mons, int count)
 {
@@ -1234,9 +1249,7 @@ sort_monitors(struct monitor_info *mons, int count)
     {
         struct monitor_info t = mons[i];
 
-        for (j = i; j > 0 && (mons[j - 1].left > t.left ||
-                              (mons[j - 1].left == t.left &&
-                               mons[j - 1].top > t.top)); --j)
+        for (j = i; j > 0 && monitor_after(&mons[j - 1], &t); --j)
         {
             mons[j] = mons[j - 1];
         }
@@ -1246,8 +1259,8 @@ sort_monitors(struct monitor_info *mons, int count)
 
 static int kwin_resize(struct wlup *v, int width, int height);
 
-/* An output per RDP monitor: the cast output for the first (left to
- * right), an output KWin makes for each other one. KWin's outputs keep
+/* An output per RDP monitor: the cast output for the first (the client's
+ * primary), an output KWin makes for each other one. KWin's outputs keep
  * the size they were made with, so an extra output whose monitor changed
  * size is made again */
 static int
