@@ -720,14 +720,17 @@ static const struct pw_core_events core_events =
  * becomes the size of the monitor. No modifier is offered, so buffers
  * are shared memory */
 static const struct spa_pod *
-build_enum_format(struct spa_pod_builder *b, int width, int height)
+build_enum_format(struct spa_pod_builder *b, int width, int height,
+                  int max_fps)
 {
     struct spa_rectangle size = SPA_RECTANGLE((uint32_t)width,
                                 (uint32_t)height);
     struct spa_rectangle min_size = SPA_RECTANGLE(1, 1);
     struct spa_rectangle max_size = SPA_RECTANGLE(8192, 8192);
     struct spa_fraction rate = SPA_FRACTION(0, 1);
-    struct spa_fraction max_rate = SPA_FRACTION(60, 1);
+    /* The compositor renders the output at up to this rate: without a
+     * GPU it does so in software, at a cost that grows with it */
+    struct spa_fraction max_rate = SPA_FRACTION(max_fps > 0 ? max_fps : 60, 1);
     struct spa_fraction min_rate = SPA_FRACTION(1, 1);
 
     /* (casts: the macro gives a void *, which C++ does not convert) */
@@ -762,7 +765,7 @@ connect_stream(struct wlup_pwc *c, uint32_t node_id, int width, int height)
                                   NULL));
     pw_stream_add_listener(c->stream, &c->stream_listener, &stream_events, c);
 
-    params[0] = build_enum_format(&b, width, height);
+    params[0] = build_enum_format(&b, width, height, c->v->max_fps);
 
     if (pw_stream_connect(c->stream, PW_DIRECTION_INPUT, node_id,
                           (enum pw_stream_flags)
@@ -825,6 +828,8 @@ wlup_pwc_connect(struct wlup *v, const char *who, uint32_t node_id,
         wlup_pwc_destroy(c);
         return NULL;
     }
+    LOG(LOG_LEVEL_INFO, "wlup/%s: at most %d frames a second (max_fps)", who,
+        v->max_fps > 0 ? v->max_fps : 60);
     return c;
 }
 
@@ -908,7 +913,7 @@ wlup_pwc_set_size(struct wlup_pwc *c, int width, int height)
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(pod_buf, sizeof(pod_buf));
     const struct spa_pod *params[1];
 
-    params[0] = build_enum_format(&b, width, height);
+    params[0] = build_enum_format(&b, width, height, c->v->max_fps);
     if (pw_stream_update_params(c->stream, params, 1) < 0)
     {
         LOG(LOG_LEVEL_ERROR, "wlup/%s: cannot renegotiate the stream",
