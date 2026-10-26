@@ -38,6 +38,7 @@
 #include "arch.h"
 
 struct wlup;
+struct monitor_info;
 
 struct wlup_backend_ops
 {
@@ -80,6 +81,14 @@ struct wlup_backend_ops
     int (*pixels_busy)(struct wlup *v);
     /* Sends what is buffered for the compositor after input */
     void (*flush)(struct wlup *v);
+    /* Asks for one output per RDP monitor: monitors[i] is a rect of the
+     * desktop of width x height (non-negative, right and bottom
+     * inclusive). Called also when only the layout changed, the total
+     * size not. Same return as resize(). NULL: resize() makes one
+     * output of the total size */
+    int (*resize_monitors)(struct wlup *v, int width, int height,
+                           int num_monitors,
+                           const struct monitor_info *monitors);
     /* The RDP client's clipboard now holds this UTF-8 text: make the
      * session's clipboard offer it */
     void (*set_clipboard_text)(struct wlup *v, const char *text, int len);
