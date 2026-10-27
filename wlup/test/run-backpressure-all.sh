@@ -66,6 +66,8 @@ for session in $SESSIONS; do
                     > /out/run.log 2>&1; rc=$?; chmod -R a+r /out; exit $rc'
             ;;
         gnome)
+            # systemd's image sits on the e2e client's, as in run-all.sh
+            build xrdp-wlup-freerdp-av1 "$TEST_DIR/freerdp-av1"
             build xrdp-wlup-systemd "$TEST_DIR/systemd"
             build xrdp-wlup-gnome "$TEST_DIR/gnome"
             build xrdp-wlup-mutter "$TEST_DIR/mutter"
