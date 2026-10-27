@@ -88,7 +88,10 @@
 #define WHEEL_STEP 15
 
 /* Versions bound. kde_output_device_v2 objects come from the registry,
- * which only exists from version 21 */
+ * which only exists from version 21. Custom modes come with
+ * kde_output_management_v2 18, but KWin 6.8 takes them only from clients
+ * of version 22 (add_cvt's) or later: the newest version both KWin and
+ * these protocol files know is bound, from MANAGEMENT_VERSION on */
 #define SCREENCAST_VERSION 6
 #define FAKE_INPUT_VERSION 4
 #define DEVICE_REGISTRY_VERSION 21
@@ -711,7 +714,8 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name,
         k->management = (struct kde_output_management_v2 *)
                         wl_registry_bind(registry, name,
                                          &kde_output_management_v2_interface,
-                                         MANAGEMENT_VERSION);
+                                         MIN(version, (uint32_t)
+                                             kde_output_management_v2_interface.version));
     }
     else if (k->clip == NULL)
     {
