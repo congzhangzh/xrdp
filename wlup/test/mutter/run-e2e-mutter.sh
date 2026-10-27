@@ -268,6 +268,40 @@ FOOT_BG=$(pixel 1500,500)
 echo "two monitors: foot $FOOT_BG at 1500,500, left monitor $(pixel 100,500) $(pixel 795,590)," \
     "right monitor's corners $(pixel 805,590) $(pixel 1595,590)"
 
+# --- two monitors, the right one the client's primary ---------------------
+# GNOME's primary must be the client's primary, and be the first virtual
+# monitor, Meta-0, which holds the session's windows: with the outputs sorted
+# left to right Meta-0 was the left one, so the windows went to the screen
+# the user was not on. /monitors:1,0 lists the right monitor first, and the
+# client sends it as its primary (xf_monitor.c: a first monitor that is not
+# at 0,0 is the primary); xrdp's log says what it got
+kill $CLIENT 2>/dev/null || true
+sleep 3
+DISPLAY=:98 ${XFREERDP:-xfreerdp3} /v:127.0.0.1 /u:tester /p:$PASSWORD \
+    /cert:ignore /multimon /monitors:1,0 /bpp:32 /gfx:AVC420 -grab-keyboard \
+    > "$OUT/client-2mon-primary.log" 2>&1 &
+CLIENT=$!
+for _ in $(seq 30); do
+    [ "$(grep -c "wlup: connected to Mutter" /var/log/xrdp.log)" -ge 5 ] && break
+    sleep 1
+done
+sleep 4
+CLIENT_PRIMARY=$(grep "wlup/mutter: virtual monitor [0-9]*: .*, primary" /var/log/xrdp.log | tail -1 |
+    sed 's/.*: \([0-9x+]*\), primary.*/\1/')
+in_session "gdbus call --session --dest org.gnome.Mutter.DisplayConfig \
+    --object-path /org/gnome/Mutter/DisplayConfig \
+    --method org.gnome.Mutter.DisplayConfig.GetCurrentState" \
+    > "$OUT/displayconfig-2mon-primary.txt" 2>&1 || true
+# the logical monitors with their first connector: x y primary connector
+python3 -I - "$OUT/displayconfig-2mon-primary.txt" > "$OUT/logical-2mon-primary.txt" <<'PY' || true
+import re, sys
+text = open(sys.argv[1]).read()
+for m in re.findall(r"\((-?\d+), (-?\d+), [\d.]+, (?:uint32 )?\d+, (true|false), \[\('([^']+)'", text):
+    print(*m)
+PY
+echo "two monitors, the right one primary: the client's primary $CLIENT_PRIMARY;" \
+    "GNOME's: $(awk '$3 == "true"' "$OUT/logical-2mon-primary.txt")"
+
 # --- API contract: what Mutter offers against what the backend calls --------
 API_OK=0
 in_session "python3 -I $SRC/wlup/test/api/api-contract.py mutter \
@@ -375,6 +409,10 @@ check "two monitors: a maximized window fills the right monitor only" \
      [ "$(pixel 795,590)" != "$FOOT_BG" ] && [ "$(pixel 100,500)" != "$FOOT_BG" ]'
 check "two monitors: input on the right monitor reaches it" \
     '[ "$(cat /tmp/typed-2mon.txt 2>/dev/null)" = twomon-42 ]'
+check "two monitors, the right one primary: the client sends it as its primary" \
+    '[ "$CLIENT_PRIMARY" = 800x600+800+0 ]'
+check "two monitors, the right one primary: GNOME's primary is it, the first virtual monitor (Meta-0)" \
+    '[ "$(awk "\$3 == \"true\" { print \$1, \$2, \$4 }" "$OUT/logical-2mon-primary.txt")" = "800 0 Meta-0" ]'
 echo "passed $pass, failed $fail"
 
 kill $CLIENT 2>/dev/null || true
