@@ -185,6 +185,10 @@ AC_ARG_ENABLE(av1, AS_HELP_STRING([--enable-av1],
               [Use libaom for AV1, FreeRDP's GFX extension (default: no)]),
               [], [enable_av1=no])
 AM_CONDITIONAL(XRDP_AV1, [test x$enable_av1 = xyes])
+AC_ARG_ENABLE(av2, AS_HELP_STRING([--enable-av2],
+              [Use libavm for AV2, FreeRDP's GFX extension (default: no)]),
+              [], [enable_av2=no])
+AM_CONDITIONAL(XRDP_AV2, [test x$enable_av2 = xyes])
 AC_ARG_ENABLE(openh264, AS_HELP_STRING([--enable-openh264],
               [Use Cisco OpenH264 library (default: no)]),
               [], [enable_openh264=no])
@@ -584,6 +588,9 @@ AS_IF( [test "x$enable_pixman" = "xyes"] , [PKG_CHECK_MODULES(PIXMAN, pixman-1 >
 
 AS_IF( [test "x$enable_x264" = "xyes"] , [PKG_CHECK_MODULES(XRDP_X264, x264 >= 0.3.0)] )
 AS_IF( [test "x$enable_av1" = "xyes"] , [PKG_CHECK_MODULES(XRDP_AV1, aom >= 3.0.0)] )
+# libavm is usually a static library: its private libraries (libm,
+# pthreads) are needed too
+AS_IF( [test "x$enable_av2" = "xyes"] , [PKG_CHECK_MODULES_STATIC(XRDP_AV2, avm >= 1.0.0)] )
 
 AS_IF( [test "x$enable_openh264" = "xyes"] , [PKG_CHECK_MODULES(XRDP_OPENH264, openh264 >= 2.0.0)] )
 
@@ -787,6 +794,7 @@ echo "  turbo jpeg                      $enable_tjpeg"
 echo "  rfxcodec                        $enable_rfxcodec"
 echo "  x264                            $enable_x264"
 echo "  av1 (libaom)                    $enable_av1"
+echo "  av2 (libavm)                    $enable_av2"
 echo "  openh264                        $enable_openh264"
 echo "  nvenc                           $enable_nvenc"
 echo "  accel                           $enable_accel"

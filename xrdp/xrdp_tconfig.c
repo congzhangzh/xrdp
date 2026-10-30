@@ -59,10 +59,23 @@
  * QP 22 */
 #define AV1_DEFAULT_CQ_LEVEL 28
 
-/* The parameters of [AV1.<connection type>]: the key, the environment
- * variable that overrides it for every connection type, the valid range
- * and the default */
-struct av1_param_def
+/* AV2 (libavm). The settings measured at 2560x1440 on 4 cores */
+#define AV2_DEFAULT_THREADS 4 /* rows (row-mt) and tiles in parallel */
+#define AV2_MAX_THREADS 64
+/* The fastest real-time speed of libavm 1.0. 10 is only valid in newer
+ * libavm: where it is not, the encoder takes 9 */
+#define AV2_DEFAULT_CPU_USED 9
+/* A quantizer index, 0 to 255 at 8 bits. 160 is the one of the 1440p
+ * measurements: a desktop at 54 dB PSNR, about 0.5 Mbps at 30 fps */
+#define AV2_DEFAULT_QP 160
+/* log2: 2 tile columns, for the threads to work on */
+#define AV2_DEFAULT_TILE_COLUMNS 1
+
+/* The integer parameters of [AV1.<connection type>] and
+ * [AV2.<connection type>]: the key, the environment variable that
+ * overrides it for every connection type, the valid range and the
+ * default */
+struct video_param_def
 {
     const char *key;
     const char *env;
@@ -72,10 +85,22 @@ struct av1_param_def
     int def;
 };
 
+/* A video codec's section of gfx.toml: its parameters, kept in a struct
+ * for each connection type, one of which is the chroma setting */
+struct video_codec_def
+{
+    const char *section;            /* "AV1": [AV1.<connection type>] */
+    const struct video_param_def *params;
+    unsigned int param_count;
+    size_t param_size;              /* the struct of one connection type */
+    size_t chroma_offset;           /* its enum xrdp_tconfig_av1_chroma */
+    const char *chroma_env;         /* XRDP_GFX_AV1_CHROMA */
+};
+
 #define AV1_PARAM_OFFSET(member) \
     offsetof(struct xrdp_tconfig_gfx_av1_param, member)
 
-static const struct av1_param_def av1_params[] =
+static const struct video_param_def av1_params[] =
 {
     {
         "threads", "XRDP_GFX_AV1_THREADS", AV1_PARAM_OFFSET(threads),
@@ -96,11 +121,72 @@ static const struct av1_param_def av1_params[] =
 };
 
 #define AV1_PARAM_COUNT (sizeof(av1_params) / sizeof(av1_params[0]))
+#define AV1_PARAM_SIZE sizeof(struct xrdp_tconfig_gfx_av1_param)
+
+static const struct video_codec_def av1_codec =
+{
+    "AV1", av1_params, AV1_PARAM_COUNT,
+    AV1_PARAM_SIZE, AV1_PARAM_OFFSET(chroma),
+    "XRDP_GFX_AV1_CHROMA"
+};
+
+#define AV2_PARAM_OFFSET(member) \
+    offsetof(struct xrdp_tconfig_gfx_av2_param, member)
+
+static const struct video_param_def av2_params[] =
+{
+    {
+        "threads", "XRDP_GFX_AV2_THREADS", AV2_PARAM_OFFSET(threads),
+        1, AV2_MAX_THREADS, AV2_DEFAULT_THREADS
+    },
+    {
+        "cpu_used", "XRDP_GFX_AV2_CPU_USED", AV2_PARAM_OFFSET(cpu_used),
+        0, 10, AV2_DEFAULT_CPU_USED
+    },
+    {
+        "qp", "XRDP_GFX_AV2_QP", AV2_PARAM_OFFSET(qp),
+        0, 255, AV2_DEFAULT_QP
+    },
+    {
+        "target_bitrate", "XRDP_GFX_AV2_TARGET_BITRATE",
+        AV2_PARAM_OFFSET(target_bitrate), 0, 1000000, 0
+    },
+    {
+        "tile_columns", "XRDP_GFX_AV2_TILE_COLUMNS",
+        AV2_PARAM_OFFSET(tile_columns), 0, 6, AV2_DEFAULT_TILE_COLUMNS
+    }
+};
+
+#define AV2_PARAM_COUNT (sizeof(av2_params) / sizeof(av2_params[0]))
+#define AV2_PARAM_SIZE sizeof(struct xrdp_tconfig_gfx_av2_param)
+
+static const struct video_codec_def av2_codec =
+{
+    "AV2", av2_params, AV2_PARAM_COUNT,
+    AV2_PARAM_SIZE, AV2_PARAM_OFFSET(chroma),
+    "XRDP_GFX_AV2_CHROMA"
+};
+
+/* The struct of connection type ct in an array of them */
+static void *
+video_param_at(const struct video_codec_def *cd, void *params, int ct)
+{
+    return (char *)params + cd->param_size * ct;
+}
 
 static int *
-av1_param_ptr(struct xrdp_tconfig_gfx_av1_param *param, unsigned int i)
+video_param_ptr(const struct video_codec_def *cd, void *param,
+                unsigned int i)
 {
-    return (int *)((char *)param + av1_params[i].offset);
+    return (int *)((char *)param + cd->params[i].offset);
+}
+
+static enum xrdp_tconfig_av1_chroma *
+video_chroma_ptr(const struct video_codec_def *cd, void *param)
+{
+    char *p = (char *)param + cd->chroma_offset;
+
+    return (enum xrdp_tconfig_av1_chroma *)p;
 }
 
 const char *
@@ -181,6 +267,12 @@ tconfig_codec_order_to_str(
                     buff[p++] = 'A';
                     buff[p++] = 'V';
                     buff[p++] = '1';
+                    break;
+
+                case XTC_AV2:
+                    buff[p++] = 'A';
+                    buff[p++] = 'V';
+                    buff[p++] = '2';
                     break;
 
                 default:
@@ -465,63 +557,65 @@ tconfig_load_gfx_x264_ct(toml_table_t *tfile, const int connection_type,
     return 0;
 }
 
-/* The [AV1] section is optional: without it, the defaults stand */
+/* The [AV1] and [AV2] sections are optional: without them, the defaults
+ * stand. param is the struct of the connection type */
 static int
-tconfig_load_gfx_av1_ct(toml_table_t *tfile, const int connection_type,
-                        struct xrdp_tconfig_gfx_av1_param *param)
+tconfig_load_gfx_video_ct(toml_table_t *tfile, const struct video_codec_def *cd,
+                          const int connection_type, void *param)
 {
-    TCLOG(LOG_LEVEL_TRACE, "[AV1]");
+    TCLOG(LOG_LEVEL_TRACE, "[%s]", cd->section);
 
     if (connection_type >= NUM_CONNECTION_TYPES)
     {
-        TCLOG(LOG_LEVEL_ERROR, "[AV1] Invalid connection type is given");
+        TCLOG(LOG_LEVEL_ERROR, "[%s] Invalid connection type is given",
+              cd->section);
         return 1;
     }
 
-    toml_table_t *av1 = toml_table_in(tfile, "AV1");
-    if (!av1)
+    toml_table_t *section = toml_table_in(tfile, cd->section);
+    if (!section)
     {
         return 1;
     }
 
-    toml_table_t *av1_ct =
-        toml_table_in(av1, rdpbcgr_connection_type_names[connection_type]);
+    toml_table_t *section_ct =
+        toml_table_in(section, rdpbcgr_connection_type_names[connection_type]);
     toml_datum_t datum;
 
-    if (!av1_ct)
+    if (!section_ct)
     {
         return 1;
     }
 
-    for (unsigned int i = 0; i < AV1_PARAM_COUNT; i++)
+    for (unsigned int i = 0; i < cd->param_count; i++)
     {
-        const struct av1_param_def *pd = &av1_params[i];
+        const struct video_param_def *pd = &cd->params[i];
 
-        datum = toml_int_in(av1_ct, pd->key);
+        datum = toml_int_in(section_ct, pd->key);
         if (!datum.ok)
         {
             continue;
         }
         if (datum.u.i >= pd->min && datum.u.i <= pd->max)
         {
-            *av1_param_ptr(&param[connection_type], i) = (int)datum.u.i;
+            *video_param_ptr(cd, param, i) = (int)datum.u.i;
         }
         else
         {
             TCLOG(LOG_LEVEL_WARNING,
-                  "[AV1.%s] %s must be %d to %d, "
-                  "adopting the default value [%d]",
+                  "[%s.%s] %s must be %d to %d, "
+                  "adopting the default value [%d]", cd->section,
                   rdpbcgr_connection_type_names[connection_type],
                   pd->key, pd->min, pd->max, pd->def);
-            *av1_param_ptr(&param[connection_type], i) = pd->def;
+            *video_param_ptr(cd, param, i) = pd->def;
         }
     }
 
     /* chroma: "auto", "420" or "444", also as the number 420 or 444 */
-    datum = toml_string_in(av1_ct, "chroma");
+    datum = toml_string_in(section_ct, "chroma");
     if (!datum.ok)
     {
-        toml_datum_t num = toml_int_in(av1_ct, "chroma");
+        toml_datum_t num = toml_int_in(section_ct, "chroma");
         if (num.ok)
         {
             datum.ok = 1;
@@ -531,19 +625,50 @@ tconfig_load_gfx_av1_ct(toml_table_t *tfile, const int connection_type,
     }
     if (datum.ok)
     {
-        if (av1_chroma_from_str(datum.u.s,
-                                &param[connection_type].chroma) != 0)
+        if (av1_chroma_from_str(datum.u.s, video_chroma_ptr(cd, param)) != 0)
         {
             TCLOG(LOG_LEVEL_WARNING,
-                  "[AV1.%s] chroma must be \"auto\", \"420\" or \"444\", "
-                  "adopting the default value \"auto\"",
+                  "[%s.%s] chroma must be \"auto\", \"420\" or \"444\", "
+                  "adopting the default value \"auto\"", cd->section,
                   rdpbcgr_connection_type_names[connection_type]);
-            param[connection_type].chroma = XTC_AV1_CHROMA_AUTO;
+            *video_chroma_ptr(cd, param) = XTC_AV1_CHROMA_AUTO;
         }
         free(datum.u.s);
     }
 
     return 0;
+}
+
+/* Reads [<section>.default], then copies it to the other connection
+ * types and overrides it with their own sections */
+static void
+tconfig_load_gfx_video(toml_table_t *tfile, const struct video_codec_def *cd,
+                       void *params)
+{
+    tconfig_load_gfx_video_ct(tfile, cd, 0, params);
+    for (int ct = CONNECTION_TYPE_MODEM; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        void *param = video_param_at(cd, params, ct);
+
+        memcpy(param, params, cd->param_size);
+        tconfig_load_gfx_video_ct(tfile, cd, ct, param);
+    }
+}
+
+/* The defaults, for every connection type */
+static void
+tconfig_video_defaults(const struct video_codec_def *cd, void *params)
+{
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        void *param = video_param_at(cd, params, ct);
+
+        for (unsigned int i = 0; i < cd->param_count; i++)
+        {
+            *video_param_ptr(cd, param, i) = cd->params[i].def;
+        }
+        *video_chroma_ptr(cd, param) = XTC_AV1_CHROMA_AUTO;
+    }
 }
 
 static int tconfig_load_gfx_h264_encoder(toml_table_t *tfile, struct xrdp_tconfig_gfx *config)
@@ -603,6 +728,7 @@ static int tconfig_load_gfx_order(toml_table_t *tfile, struct xrdp_tconfig_gfx *
     int h264_found = 0;
     int rfx_found = 0;
     int av1_found = 0;
+    int av2_found = 0;
 
     config->codec.codec_count = 0;
 
@@ -638,6 +764,13 @@ static int tconfig_load_gfx_order(toml_table_t *tfile, struct xrdp_tconfig_gfx *
                 {
                     av1_found = 1;
                     config->codec.codecs[config->codec.codec_count] = XTC_AV1;
+                    ++config->codec.codec_count;
+                }
+                if (av2_found == 0 &&
+                        g_strcasecmp(datum.u.s, "av2") == 0)
+                {
+                    av2_found = 1;
+                    config->codec.codecs[config->codec.codec_count] = XTC_AV2;
                     ++config->codec.codec_count;
                 }
                 free(datum.u.s);
@@ -712,17 +845,18 @@ disable_codec(struct xrdp_tconfig_gfx_codec_order *co,
 }
 
 /* XRDP_GFX_AV1_<KEY> (XRDP_GFX_AV1_THREADS, XRDP_GFX_AV1_CPU_USED, ...,
- * XRDP_GFX_AV1_CHROMA), if set, overrides gfx.toml for every connection
- * type. Invalid values are ignored */
+ * XRDP_GFX_AV1_CHROMA), and XRDP_GFX_AV2_<KEY> for AV2, if set,
+ * override gfx.toml for every connection type. Invalid values are
+ * ignored */
 static void
-tconfig_load_gfx_av1_env(struct xrdp_tconfig_gfx *config)
+tconfig_load_gfx_video_env(const struct video_codec_def *cd, void *params)
 {
-    const char *chroma_env = g_getenv("XRDP_GFX_AV1_CHROMA");
+    const char *chroma_env = g_getenv(cd->chroma_env);
     enum xrdp_tconfig_av1_chroma chroma;
 
-    for (unsigned int i = 0; i < AV1_PARAM_COUNT; i++)
+    for (unsigned int i = 0; i < cd->param_count; i++)
     {
-        const struct av1_param_def *pd = &av1_params[i];
+        const struct video_param_def *pd = &cd->params[i];
         const char *env_var = g_getenv(pd->env);
         int value;
 
@@ -741,7 +875,7 @@ tconfig_load_gfx_av1_env(struct xrdp_tconfig_gfx *config)
         TCLOG(LOG_LEVEL_INFO, "%s set to %d", pd->env, value);
         for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
         {
-            *av1_param_ptr(&config->av1_param[ct], i) = value;
+            *video_param_ptr(cd, video_param_at(cd, params, ct), i) = value;
         }
     }
 
@@ -751,14 +885,15 @@ tconfig_load_gfx_av1_env(struct xrdp_tconfig_gfx *config)
     }
     if (av1_chroma_from_str(chroma_env, &chroma) != 0)
     {
-        TCLOG(LOG_LEVEL_WARNING, "XRDP_GFX_AV1_CHROMA set but invalid %s "
-              "(must be auto, 420 or 444), ignoring it", chroma_env);
+        TCLOG(LOG_LEVEL_WARNING, "%s set but invalid %s "
+              "(must be auto, 420 or 444), ignoring it", cd->chroma_env,
+              chroma_env);
         return;
     }
-    TCLOG(LOG_LEVEL_INFO, "XRDP_GFX_AV1_CHROMA set to %s", chroma_env);
+    TCLOG(LOG_LEVEL_INFO, "%s set to %s", cd->chroma_env, chroma_env);
     for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
     {
-        config->av1_param[ct].chroma = chroma;
+        *video_chroma_ptr(cd, video_param_at(cd, params, ct)) = chroma;
     }
 }
 
@@ -774,14 +909,8 @@ tconfig_load_gfx_file(const char *filename, struct xrdp_tconfig_gfx *config)
     config->codec.codec_count = 1;
     config->codec.codecs[0] = XTC_RFX;
     memset(config->x264_param, 0, sizeof(config->x264_param));
-    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
-    {
-        for (unsigned int i = 0; i < AV1_PARAM_COUNT; i++)
-        {
-            *av1_param_ptr(&config->av1_param[ct], i) = av1_params[i].def;
-        }
-        config->av1_param[ct].chroma = XTC_AV1_CHROMA_AUTO;
-    }
+    tconfig_video_defaults(&av1_codec, config->av1_param);
+    tconfig_video_defaults(&av2_codec, config->av2_param);
 
     if ((fp = fopen(filename, "r")) == NULL)
     {
@@ -858,17 +987,14 @@ tconfig_load_gfx_file(const char *filename, struct xrdp_tconfig_gfx *config)
         }
     }
 
-    /* AV1 configuration */
+    /* AV1 and AV2 configuration */
     if (codec_enabled(&config->codec, XTC_AV1))
     {
-        /* Read the default params, then copy them to other connection
-         * types and override them */
-        tconfig_load_gfx_av1_ct(tfile, 0, config->av1_param);
-        for (int ct = CONNECTION_TYPE_MODEM; ct < NUM_CONNECTION_TYPES; ct++)
-        {
-            config->av1_param[ct] = config->av1_param[0];
-            tconfig_load_gfx_av1_ct(tfile, ct, config->av1_param);
-        }
+        tconfig_load_gfx_video(tfile, &av1_codec, config->av1_param);
+    }
+    if (codec_enabled(&config->codec, XTC_AV2))
+    {
+        tconfig_load_gfx_video(tfile, &av2_codec, config->av2_param);
     }
     toml_free(tfile);
 
@@ -882,7 +1008,8 @@ tconfig_load_gfx(const char *filename, struct xrdp_tconfig_gfx *config)
 
     /* The environment comes before the file, and the file before the
      * defaults, even when the file could not be loaded */
-    tconfig_load_gfx_av1_env(config);
+    tconfig_load_gfx_video_env(&av1_codec, config->av1_param);
+    tconfig_load_gfx_video_env(&av2_codec, config->av2_param);
 
     return rv;
 }

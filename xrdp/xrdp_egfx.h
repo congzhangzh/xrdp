@@ -45,6 +45,10 @@
  * codec (XR_RDPGFX_CODECID_AV1). See FreeRDP's
  * include/freerdp/channels/rdpgfx.h */
 #define XR_RDPGFX_CAPVERSION_FRDP_1 0x00010000
+/* FreeRDP's extension, as FRDP_1 but for the AV2 codec
+ * (XR_RDPGFX_CODECID_AV2): a capability set of its own, so a client
+ * offers AV1 and AV2 separately */
+#define XR_RDPGFX_CAPVERSION_FRDP_2 0x00020000
 
 #define XR_PIXEL_FORMAT_XRGB_8888   0x20
 #define XR_PIXEL_FORMAT_ARGB_8888   0x21
@@ -58,6 +62,10 @@
  * can decode AV1 in 4:4:4 (profile 1), unless it also sets _DISABLED */
 #define XR_RDPGFX_CAPS_FLAG_AV1_I444_SUPPORTED  0x10000000
 #define XR_RDPGFX_CAPS_FLAG_AV1_I444_DISABLED   0x20000000
+/* The same values, with XR_RDPGFX_CAPVERSION_FRDP_2 only: the client can
+ * decode AV2 in 4:4:4, unless it also sets _DISABLED */
+#define XR_RDPGFX_CAPS_FLAG_AV2_I444_SUPPORTED  0x10000000
+#define XR_RDPGFX_CAPS_FLAG_AV2_I444_DISABLED   0x20000000
 
 #define XR_RDPGFX_CMDID_WIRETOSURFACE_1             0x0001
 #define XR_RDPGFX_CMDID_WIRETOSURFACE_2             0x0002
@@ -117,6 +125,9 @@
 /* FreeRDP's extension, with XR_RDPGFX_CAPVERSION_FRDP_1 only: an AV1
  * bitstream after an RFX_AVC420_METABLOCK, framed as for AVC420 */
 #define XR_RDPGFX_CODECID_AV1               0x0001
+/* FreeRDP's extension, with XR_RDPGFX_CAPVERSION_FRDP_2 only: an AV2
+ * bitstream after an RFX_AVC420_METABLOCK, framed as for AVC420 */
+#define XR_RDPGFX_CODECID_AV2               0x0002
 
 struct xrdp_egfx_rect
 {

@@ -426,39 +426,64 @@ xrdp_mm_get_session_fds(struct xrdp_mm *self)
 }
 
 /*****************************************************************************/
-/* AV1 in 4:4:4 needs frames with the full colour resolution
+/* AV1 and AV2 in 4:4:4 need frames with the full colour resolution
  * (XRDP_yuv444_709fr), which only wlup sends: Wayland and GNOME sessions.
  * The client offers it before the user logs in, so this runs once the
  * session type is known, before the module gets the client info.
- * [AV1] chroma in gfx.toml: "auto" (4:4:4 when possible), "420" or "444"
- * (4:4:4, with a warning when it is not possible) */
+ * [AV1] (or [AV2]) chroma in gfx.toml: "auto" (4:4:4 when possible), "420"
+ * or "444" (4:4:4, with a warning when it is not possible) */
 static void
-xrdp_mm_update_av1_444(struct xrdp_mm *self)
+xrdp_mm_update_yuv444(struct xrdp_mm *self)
 {
     struct xrdp_client_info *ci = self->wm->client_info;
     enum xrdp_tconfig_av1_chroma chroma;
+    enum xrdp_egfx_flags flag_444;
+    const char *codec;
+    const char *profile_444;
+    int allowed;
     const char *why_420;
+    char no_444[64];
     int ct = ci->mcs_connection_type;
 
-    if ((self->egfx_flags & XRDP_EGFX_AV1) == 0 ||
-            (self->egfx_flags & XRDP_EGFX_AV1_444) != 0)
-    {
-        return;
-    }
     /* as xrdp_encoder_av1_encode(): autodetect and others are LAN */
     if (ct > CONNECTION_TYPE_LAN || ct < CONNECTION_TYPE_MODEM)
     {
         ct = CONNECTION_TYPE_LAN;
     }
-    chroma = self->wm->gfx_config->av1_param[ct].chroma;
+    if ((self->egfx_flags & XRDP_EGFX_AV2) != 0)
+    {
+        codec = "AV2";
+        profile_444 = "profile 4";
+        flag_444 = XRDP_EGFX_AV2_444;
+        allowed = self->av2_444_allowed;
+        chroma = self->wm->gfx_config->av2_param[ct].chroma;
+    }
+    else if ((self->egfx_flags & XRDP_EGFX_AV1) != 0)
+    {
+        codec = "AV1";
+        profile_444 = "profile 1";
+        flag_444 = XRDP_EGFX_AV1_444;
+        allowed = self->av1_444_allowed;
+        chroma = self->wm->gfx_config->av1_param[ct].chroma;
+    }
+    else
+    {
+        return;
+    }
+    if ((self->egfx_flags & flag_444) != 0)
+    {
+        return;
+    }
 
     if (chroma == XTC_AV1_CHROMA_420)
     {
         why_420 = "gfx.toml asks for it";
     }
-    else if (!self->av1_444_allowed)
+    else if (!allowed)
     {
-        why_420 = "the client does not offer AV1 4:4:4";
+        g_snprintf(no_444, sizeof(no_444),
+                   "the client does not offer %s 4:4:4", codec);
+        why_420 = no_444;
     }
     else if (!IS_WLUP_SESSION_CODE(self->code))
     {
@@ -472,15 +497,16 @@ xrdp_mm_update_av1_444(struct xrdp_mm *self)
     if (why_420 != NULL)
     {
         LOG(chroma == XTC_AV1_CHROMA_444 ? LOG_LEVEL_WARNING : LOG_LEVEL_INFO,
-            "AV1 in 4:2:0 (profile 0, chroma = \"%s\"): %s",
+            "%s in 4:2:0 (profile 0, chroma = \"%s\"): %s", codec,
             tconfig_av1_chroma_to_str(chroma), why_420);
         return;
     }
-    LOG(LOG_LEVEL_INFO, "AV1 in 4:4:4 (profile 1, chroma = \"%s\"): frames "
-        "come as yuv444", tconfig_av1_chroma_to_str(chroma));
+    LOG(LOG_LEVEL_INFO, "%s in 4:4:4 (%s, chroma = \"%s\"): frames "
+        "come as yuv444", codec, profile_444,
+        tconfig_av1_chroma_to_str(chroma));
     /* (a cast: the code is also built as C++) */
     self->egfx_flags = (enum xrdp_egfx_flags)
-                       (self->egfx_flags | XRDP_EGFX_AV1_444);
+                       (self->egfx_flags | flag_444);
     ci->capture_format = XRDP_yuv444_709fr;
 }
 
@@ -1338,6 +1364,9 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
 #if defined(XRDP_AV1)
     int best_av1_index;
 #endif
+#if defined(XRDP_AV2)
+    int best_av2_index;
+#endif
     int error;
     int version;
     int flags;
@@ -1371,6 +1400,9 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
     best_pro_index = -1;
 #if defined(XRDP_AV1)
     best_av1_index = -1;
+#endif
+#if defined(XRDP_AV2)
+    best_av2_index = -1;
 #endif
     for (index = 0; index < caps_count; index++)
     {
@@ -1417,6 +1449,13 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
                 best_av1_index = index;
                 break;
 #endif
+#if defined(XRDP_AV2)
+            case XR_RDPGFX_CAPVERSION_FRDP_2:
+                /* FreeRDP's AV2 extension, chosen only for AV2, as
+                 * FRDP_1 for AV1 */
+                best_av2_index = index;
+                break;
+#endif
             default:
                 /* just skip unknwown */
                 LOG(LOG_LEVEL_INFO, "unknown version 0x%8.8x", version);
@@ -1432,6 +1471,21 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
         tconfig_codec_order_to_str(co, cobuff, sizeof(cobuff)));
     for (index = 0 ; index < co->codec_count ; ++index)
     {
+#if defined(XRDP_AV2)
+        if (co->codecs[index] == XTC_AV2 && best_av2_index >= 0)
+        {
+            /* The H.264 pipeline, with AV2 as the encoder */
+            LOG(LOG_LEVEL_INFO, "Matched AV2 mode");
+            best_index = best_av2_index;
+            self->egfx_flags = (enum xrdp_egfx_flags)
+                               (XRDP_EGFX_H264 | XRDP_EGFX_AV2);
+            flags = ver_flags[best_index].flags;
+            self->av2_444_allowed =
+                (flags & XR_RDPGFX_CAPS_FLAG_AV2_I444_SUPPORTED) != 0 &&
+                (flags & XR_RDPGFX_CAPS_FLAG_AV2_I444_DISABLED) == 0;
+            break;
+        }
+#endif
 #if defined(XRDP_AV1)
         if (co->codecs[index] == XTC_AV1 && best_av1_index >= 0)
         {
@@ -5829,7 +5883,7 @@ xrdp_mm_setup_mod2(struct xrdp_mm *self)
         /* always set these */
 
         /* The session type is known now */
-        xrdp_mm_update_av1_444(self);
+        xrdp_mm_update_yuv444(self);
         mod->mod_set_param(mod, "client_info",
                            (const char *) (self->wm->session->client_info));
 

@@ -1,0 +1,38 @@
+[codec]
+order = [ "AV2", "H.264", "RFX" ]
+
+[x264.default]
+preset = "ultrafast"
+tune = "zerolatency"
+profile = "main"
+vbv_max_bitrate = 0
+vbv_buffer_size = 0
+fps_num = 24
+fps_den = 1
+threads = 1
+
+# [AV1] is not in the order: these must not be read
+[AV1.default]
+threads = 7
+cq_level = 40
+
+[AV2.default]
+threads = 6
+cpu_used = 10
+qp = 120
+tile_columns = 2
+chroma = "420"
+
+[AV2.wan]
+target_bitrate = 15_000
+tile_columns = 0
+
+[AV2.broadband_low]
+chroma = 444         # a number works too
+
+[AV2.modem]
+threads = 0          # invalid: the default value is used
+cpu_used = 11        # invalid: the default value is used
+qp = 256             # invalid: the default value is used
+tile_columns = 7     # invalid: the default value is used
+chroma = "422"       # invalid: the default value is used
