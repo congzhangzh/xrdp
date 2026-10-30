@@ -23,6 +23,9 @@ The file contains following sections:
 .TP
 \fB[AV1]\fR \- parameters for the AV1 encoder (libaom).
 
+.TP
+\fB[AV2]\fR \- parameters for the AV2 encoder (libavm).
+
 .LP
 All options and values are case-sensitive, with some exception, and are
 described in detail below.
@@ -33,7 +36,8 @@ to be specified in this section are the following:
 
 .TP
 \fBorder\fR = \fI<array>\fR
-Define the order in which codecs should be used, "H.264", "RFX" and "AV1".
+Define the order in which codecs should be used, "H.264", "RFX", "AV1"
+and "AV2".
 Specify as an array of strings like \fB[ "H.264", "RFX ]\fR.
 Strings in the array are case-insensitive, while others are case-sensitive.
 
@@ -42,6 +46,14 @@ MS-RDPEGFX: only FreeRDP clients built with it offer it (\fB/gfx:AV1\fR),
 and only an xrdp built with \fB--enable-av1\fR (libaom) uses it. Clients
 that do not offer it get the next codec in the order, so
 \fB[ "AV1", "H.264", "RFX" ]\fR is safe for every client.
+
+"AV2" is FreeRDP's extension for AV2, the successor of AV1, in the same
+way: only FreeRDP clients built with it offer it (\fB/gfx:AV2\fR), with
+a capability set of its own, and only an xrdp built with
+\fB--enable-av2\fR (libavm) uses it. A client may offer both: the first
+of the two in the order wins, so \fB[ "AV2", "AV1", "H.264", "RFX" ]\fR
+gives AV2 to the clients that offer it, AV1 to those that offer only AV1,
+and H.264 or RFX to the others.
 
 .TP
 \fBh264_encoder\fR = \fI<string>\fR
@@ -185,9 +197,62 @@ possible. xrdp logs which one it chose, and why, when the session starts.
 4:2:2 is not available: it is AV1 profile 2, which FreeRDP's extension
 cannot offer.
 
+.SH "AV2"
+
+\fB[AV2]\fR section defines encoding parameters for the AV2 encoder
+(libavm, the AV2 reference, in its real-time usage, tuned for screen
+content), used when "AV2" is in the codec order and the client offers it.
+As with \fB[AV1]\fR, the section is optional, missing parameters take
+their default values, an invalid value is logged and the default is used,
+and every parameter can be set in the environment of the xrdp service as
+\fBXRDP_GFX_AV2_\fR followed by its name in capitals (for example
+\fBXRDP_GFX_AV2_QP\fR), which overrides \fBgfx.toml\fR for every
+connection type.
+
+The defaults were measured at 2560x1440 with 4 CPU cores. libavm is a
+reference encoder: even in its real-time usage it needs several cores per
+large screen, so set \fBthreads\fR and the number of users with care.
+
+.TP
+\fBthreads = \fI<integer>\fR
+Specify how many CPU threads to use for AV2 encoding per screen, from 1 to
+64. Defaults to \fB4\fR. The rows of each tile column are encoded in
+parallel. Every user and screen gets its own encoder, as with \fB[AV1]\fR.
+
+.TP
+\fBcpu_used\fR = \fI<integer>\fR
+Encoder speed, from \fB0\fR (slowest) to \fB9\fR (fastest), or
+\fB10\fR with a libavm that has that speed. Defaults to \fB9\fR. With a
+libavm that does not take 10, the encoder logs a warning and uses 9.
+
+.TP
+\fBqp\fR = \fI<integer>\fR
+Constant quality, a quantizer index from \fB0\fR (best) to \fB255\fR,
+used when \fBtarget_bitrate\fR is 0. Defaults to \fB160\fR. Its scale is
+not that of AV1's \fBcq_level\fR.
+
+.TP
+\fBtarget_bitrate\fR = \fI<integer>\fR
+A bitrate in kbps for the encoder to keep to on average (constant
+bitrate), or \fB0\fR (the default) for constant quality.
+
+.TP
+\fBtile_columns\fR = \fI<integer>\fR
+The number of tile columns as a power of two, from \fB0\fR (one column)
+to \fB6\fR (64). Defaults to \fB1\fR (two columns). Tile columns are
+encoded independently, so more of them keep more threads busy, at a few
+percent more bits; video-like content gains most from \fB2\fR.
+
+.TP
+\fBchroma\fR = \fI<string>\fR
+The chroma subsampling, \fBauto\fR (the default), \fB420\fR or
+\fB444\fR, as for \fB[AV1]\fR. 4:4:4 is AV2 profile 4 (main 4:4:4),
+4:2:0 profile 0. The client offers AV2 4:4:4 only when its decoder has it
+(FreeRDP decodes AV2 4:4:4 with libavm, not with dav2d).
+
 .SH "CONNECTION TYPES"
 
-\fB[x264]\fR, \fB[OpenH264]\fR and \fB[AV1]\fR section are tables (also known as
+\fB[x264]\fR, \fB[OpenH264]\fR, \fB[AV1]\fR and \fB[AV2]\fR section are tables (also known as
 dictionaries) that have subtables with connection types in their keys.
 For example, \fB[x264.lan]\fR, \fB[OpenH264.wan]\fR.
 

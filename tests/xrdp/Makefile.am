@@ -25,8 +25,10 @@ EXTRA_DIST = \
   gfx/gfx.toml \
   gfx/gfx_av1_params.toml \
   gfx/gfx_av1_threads.toml \
+  gfx/gfx_av2_params.toml \
   gfx/gfx_codec_av1_only.toml \
   gfx/gfx_codec_av1_preferred.toml \
+  gfx/gfx_codec_av2_preferred.toml \
   gfx/gfx_codec_h264_only.toml \
   gfx/gfx_codec_h264_preferred.toml \
   gfx/gfx_codec_order_undefined.toml \
@@ -104,6 +106,13 @@ AM_CPPFLAGS += -DXRDP_AV1 $(XRDP_AV1_CFLAGS)
 test_xrdp_LDADD += \
     $(top_builddir)/xrdp/xrdp_encoder_av1.o \
     $(XRDP_AV1_LIBS)
+endif
+
+if XRDP_AV2
+AM_CPPFLAGS += -DXRDP_AV2 $(XRDP_AV2_CFLAGS)
+test_xrdp_LDADD += \
+    $(top_builddir)/xrdp/xrdp_encoder_av2.o \
+    $(XRDP_AV2_LIBS)
 endif
 
 if XRDP_OPENH264

@@ -210,6 +210,115 @@ START_TEST(test_tconfig_gfx_av1_params_env)
 }
 END_TEST
 
+START_TEST(test_tconfig_gfx_av2_params)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+    const struct xrdp_tconfig_gfx_av2_param *p;
+    char buff[64];
+
+    /* No [AV2] section: the defaults everywhere */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_av2_preferred.toml", &gfxconfig);
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        p = &gfxconfig.av2_param[ct];
+        ck_assert_int_eq(p->threads, 4);
+        ck_assert_int_eq(p->cpu_used, 9);
+        ck_assert_int_eq(p->qp, 160);
+        ck_assert_int_eq(p->target_bitrate, 0);
+        ck_assert_int_eq(p->tile_columns, 1);
+        ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
+    }
+    ck_assert_str_eq(tconfig_codec_order_to_str(&gfxconfig.codec, buff,
+                     sizeof(buff)), "AV2, AV1, H264, RFX");
+
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av2_params.toml", &gfxconfig);
+
+    /* [AV2.default], inherited by LAN */
+    p = &gfxconfig.av2_param[CONNECTION_TYPE_LAN];
+    ck_assert_int_eq(p->threads, 6);
+    ck_assert_int_eq(p->cpu_used, 10);
+    ck_assert_int_eq(p->qp, 120);
+    ck_assert_int_eq(p->target_bitrate, 0);
+    ck_assert_int_eq(p->tile_columns, 2);
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
+
+    /* WAN: a bitrate and one tile column, on top of the default section */
+    p = &gfxconfig.av2_param[CONNECTION_TYPE_WAN];
+    ck_assert_int_eq(p->target_bitrate, 15000);
+    ck_assert_int_eq(p->tile_columns, 0);
+    ck_assert_int_eq(p->qp, 120);
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
+
+    /* broadband_low: chroma as a number */
+    p = &gfxconfig.av2_param[CONNECTION_TYPE_BROADBAND_LOW];
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_444);
+    ck_assert_int_eq(p->threads, 6);
+
+    /* modem: invalid values take the defaults */
+    p = &gfxconfig.av2_param[CONNECTION_TYPE_MODEM];
+    ck_assert_int_eq(p->threads, 4);
+    ck_assert_int_eq(p->cpu_used, 9);
+    ck_assert_int_eq(p->qp, 160);
+    ck_assert_int_eq(p->tile_columns, 1);
+    ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
+
+    /* AV1 is not in the order: its section is not read */
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 2);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].cq_level, 28);
+
+    /* Missing file: still the defaults */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/no_such_file.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].qp, 160);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].threads, 4);
+}
+END_TEST
+
+START_TEST(test_tconfig_gfx_av2_params_env)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+
+    /* XRDP_GFX_AV2_<NAME> overrides the file for every connection type,
+     * and leaves AV1 alone */
+    g_setenv("XRDP_GFX_AV2_THREADS", "3", 1);
+    g_setenv("XRDP_GFX_AV2_CPU_USED", "8", 1);
+    g_setenv("XRDP_GFX_AV2_QP", "200", 1);
+    g_setenv("XRDP_GFX_AV2_TARGET_BITRATE", "3000", 1);
+    g_setenv("XRDP_GFX_AV2_TILE_COLUMNS", "3", 1);
+    g_setenv("XRDP_GFX_AV2_CHROMA", "444", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av2_params.toml", &gfxconfig);
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        ck_assert_int_eq(gfxconfig.av2_param[ct].threads, 3);
+        ck_assert_int_eq(gfxconfig.av2_param[ct].cpu_used, 8);
+        ck_assert_int_eq(gfxconfig.av2_param[ct].qp, 200);
+        ck_assert_int_eq(gfxconfig.av2_param[ct].target_bitrate, 3000);
+        ck_assert_int_eq(gfxconfig.av2_param[ct].tile_columns, 3);
+        ck_assert_int_eq(gfxconfig.av2_param[ct].chroma, XTC_AV1_CHROMA_444);
+        ck_assert_int_eq(gfxconfig.av1_param[ct].threads, 2);
+        ck_assert_int_eq(gfxconfig.av1_param[ct].chroma, XTC_AV1_CHROMA_AUTO);
+    }
+
+    /* Invalid values are ignored: the file decides */
+    g_setenv("XRDP_GFX_AV2_CPU_USED", "11", 1);
+    g_setenv("XRDP_GFX_AV2_QP", "-1", 1);
+    g_setenv("XRDP_GFX_AV2_TILE_COLUMNS", "7", 1);
+    g_setenv("XRDP_GFX_AV2_CHROMA", "422", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av2_params.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].cpu_used, 10);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].qp, 120);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].tile_columns, 2);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].chroma,
+                     XTC_AV1_CHROMA_420);
+
+    unsetenv("XRDP_GFX_AV2_THREADS");
+    unsetenv("XRDP_GFX_AV2_CPU_USED");
+    unsetenv("XRDP_GFX_AV2_QP");
+    unsetenv("XRDP_GFX_AV2_TARGET_BITRATE");
+    unsetenv("XRDP_GFX_AV2_TILE_COLUMNS");
+    unsetenv("XRDP_GFX_AV2_CHROMA");
+}
+END_TEST
+
 START_TEST(test_tconfig_gfx_codec_order)
 {
     struct xrdp_tconfig_gfx gfxconfig;
@@ -248,6 +357,14 @@ START_TEST(test_tconfig_gfx_codec_order)
     ck_assert_int_eq(gfxconfig.codec.codecs[0], XTC_AV1);
     ck_assert_int_eq(gfxconfig.codec.codecs[1], XTC_H264);
     ck_assert_int_eq(gfxconfig.codec.codecs[2], XTC_RFX);
+
+    /* AV2, FreeRDP's other extension, before AV1 */
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_av2_preferred.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.codec.codec_count, 4);
+    ck_assert_int_eq(gfxconfig.codec.codecs[0], XTC_AV2);
+    ck_assert_int_eq(gfxconfig.codec.codecs[1], XTC_AV1);
+    ck_assert_int_eq(gfxconfig.codec.codecs[2], XTC_H264);
+    ck_assert_int_eq(gfxconfig.codec.codecs[3], XTC_RFX);
 
     /* AV1 alone is kept, not replaced by the default order */
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_codec_av1_only.toml", &gfxconfig);
@@ -301,6 +418,8 @@ make_suite_tconfig_load_gfx(void)
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_threads_env);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_params);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_params_env);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av2_params);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av2_params_env);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_missing_file);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_missing_h264);
 

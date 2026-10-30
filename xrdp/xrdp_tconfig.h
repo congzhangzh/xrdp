@@ -71,11 +71,24 @@ struct xrdp_tconfig_gfx_av1_param
     enum xrdp_tconfig_av1_chroma chroma;
 };
 
+/* AV2 (libavm). 4:4:4 is AV2 profile 4 (MAIN_444_10_IP1): the chroma
+ * choices are the same as AV1's */
+struct xrdp_tconfig_gfx_av2_param
+{
+    int threads;
+    int cpu_used;       /* real-time speed, 0 (slower, smaller) to 10 */
+    int qp;             /* constant quality, 0 (best) to 255 */
+    int target_bitrate; /* kbps; 0 for constant quality (qp) */
+    int tile_columns;   /* log2 of the tile columns, 0 to 6 */
+    enum xrdp_tconfig_av1_chroma chroma;
+};
+
 enum xrdp_tconfig_codecs
 {
     XTC_H264,
     XTC_RFX,
-    XTC_AV1
+    XTC_AV1,
+    XTC_AV2
 };
 
 enum xrdp_tconfig_h264_encoders
@@ -86,7 +99,7 @@ enum xrdp_tconfig_h264_encoders
 
 struct xrdp_tconfig_gfx_codec_order
 {
-    enum xrdp_tconfig_codecs codecs[3];
+    enum xrdp_tconfig_codecs codecs[4];
     unsigned short codec_count;
 };
 
@@ -100,6 +113,8 @@ struct xrdp_tconfig_gfx
         openh264_param[NUM_CONNECTION_TYPES];
     /* store AV1 (libaom) parameters for each connection type */
     struct xrdp_tconfig_gfx_av1_param av1_param[NUM_CONNECTION_TYPES];
+    /* store AV2 (libavm) parameters for each connection type */
+    struct xrdp_tconfig_gfx_av2_param av2_param[NUM_CONNECTION_TYPES];
 };
 
 static const char *const rdpbcgr_connection_type_names[] =
@@ -130,7 +145,7 @@ tconfig_codec_order_to_str(
     unsigned int bufflen);
 
 /**
- * Name of an AV1 chroma setting, as gfx.toml spells it
+ * Name of an AV1 or AV2 chroma setting, as gfx.toml spells it
  *
  * @param chroma Chroma setting
  * @return "auto", "420" or "444"

@@ -1,6 +1,8 @@
 [codec]
 # "AV1" (FreeRDP's extension; xrdp built with --enable-av1) may be added
-# first, e.g. [ "AV1", "H.264", "RFX" ]: other clients get the next codec
+# first, e.g. [ "AV1", "H.264", "RFX" ]: other clients get the next codec.
+# The same for "AV2" (xrdp built with --enable-av2), e.g.
+# [ "AV2", "AV1", "H.264", "RFX" ]
 order = [ "H.264", "RFX" ]
 
 # Specify a preferred H.264 encoder, "x264" or "OpenH264".
@@ -116,3 +118,26 @@ target_bitrate = 1_100
 [AV1.modem]
 cpu_used = 8
 target_bitrate = 800
+
+# Configurations for AV2 (libavm, the AV2 reference), used when "AV2" is in
+# the codec order. As [AV1]: optional, connection types inherit
+# [AV2.default], and XRDP_GFX_AV2_<NAME> in xrdp's environment overrides a
+# parameter for every connection type. The values shown are the defaults,
+# measured at 2560x1440 on 4 cores.
+[AV2.default]
+# CPU threads per screen for AV2 encoding, 1 to 64: rows and tile columns
+# are encoded in parallel
+threads = 4
+# Speed, 0 (slower) to 9 (fastest), or 10 with a libavm that has it
+cpu_used = 9
+# Constant quality (a quantizer index), 0 (best) to 255, used when
+# target_bitrate is 0
+qp = 160
+# A bitrate in kbps, or 0 for constant quality
+target_bitrate = 0
+# Tile columns, as a power of two: 0 (one), 1 (two), 2 (four) ... 6. More
+# columns keep more threads busy, at a few percent more bits
+tile_columns = 1
+# Chroma subsampling, as for AV1: "auto", "420" or "444". 4:4:4 is AV2
+# profile 4
+chroma = "auto"
