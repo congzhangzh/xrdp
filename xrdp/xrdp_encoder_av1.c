@@ -153,7 +153,9 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     size_t y_bytes;
     size_t uv_bytes;
     aom_codec_err_t err;
-    char rc[32];
+    enum xrdp_tconfig_rate_control mode;
+    int needs_target;
+    char rc[48];
 
     /* even for 4:2:0; the client crops what is beyond the surface */
     ae->pic_width = (width + 1) & ~1;
@@ -173,15 +175,35 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     cfg.g_timebase.den = AV1_TIMEBASE_DEN;
     cfg.g_threads = param->threads; /* rows in parallel (row-mt) */
     cfg.g_lag_in_frames = 0;    /* a frame out for each frame in */
-    if (param->target_bitrate > 0)
+    mode = tconfig_rate_control_resolve(param->rate_control,
+                                        param->target_bitrate,
+                                        &needs_target);
+    if (needs_target)
     {
-        /* libaom's real-time CBR, with its default 1 s buffer */
-        cfg.rc_end_usage = AOM_CBR;
-        cfg.rc_target_bitrate = param->target_bitrate;
+        LOG(LOG_LEVEL_WARNING, "xrdp_encoder_av1: rate_control %s needs a "
+            "target_bitrate: q instead",
+            tconfig_rate_control_to_str(param->rate_control));
     }
-    else
+    switch (mode)
     {
-        cfg.rc_end_usage = AOM_Q; /* constant quality, cq_level */
+        case XTC_RC_CQ:
+            /* cq_level as the best quality, raised only to stay under the
+             * target, libaom's default 1 s buffer */
+            cfg.rc_end_usage = AOM_CQ;
+            cfg.rc_target_bitrate = param->target_bitrate;
+            break;
+        case XTC_RC_CBR:
+            /* libaom's real-time CBR, with its default 1 s buffer */
+            cfg.rc_end_usage = AOM_CBR;
+            cfg.rc_target_bitrate = param->target_bitrate;
+            break;
+        case XTC_RC_VBR:
+            cfg.rc_end_usage = AOM_VBR;
+            cfg.rc_target_bitrate = param->target_bitrate;
+            break;
+        default:
+            cfg.rc_end_usage = AOM_Q; /* constant quality, cq_level */
+            break;
     }
     cfg.kf_mode = AOM_KF_DISABLED;
     err = aom_codec_enc_init(&ae->ctx, iface, &cfg, 0);
@@ -193,7 +215,7 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     }
     ae->open = 1;
     AV1_CONTROL(&ae->ctx, AOME_SET_CPUUSED, param->cpu_used);
-    if (param->target_bitrate <= 0)
+    if (mode == XTC_RC_Q || mode == XTC_RC_CQ)
     {
         AV1_CONTROL(&ae->ctx, AOME_SET_CQ_LEVEL, param->cq_level);
     }
@@ -222,13 +244,22 @@ av1_open(struct av1_encoder *ae, int width, int height, int yuv444,
     ae->height = height;
     ae->pts = 0;
     ae->last_ms = g_get_elapsed_ms();
-    if (param->target_bitrate > 0)
+    switch (mode)
     {
-        g_snprintf(rc, sizeof(rc), "CBR %d kbps", param->target_bitrate);
-    }
-    else
-    {
-        g_snprintf(rc, sizeof(rc), "cq-level %d", param->cq_level);
+        case XTC_RC_CQ:
+            g_snprintf(rc, sizeof(rc), "rate control cq, cq-level %d up to "
+                       "%d kbps", param->cq_level, param->target_bitrate);
+            break;
+        case XTC_RC_CBR:
+        case XTC_RC_VBR:
+            g_snprintf(rc, sizeof(rc), "rate control %s, %d kbps",
+                       tconfig_rate_control_to_str(mode),
+                       param->target_bitrate);
+            break;
+        default:
+            g_snprintf(rc, sizeof(rc), "rate control q, cq-level %d",
+                       param->cq_level);
+            break;
     }
     LOG(LOG_LEVEL_INFO, "xrdp_encoder_av1: encoder for %dx%d (picture %dx%d, "
         "%s, cpu-used %d, %s, %d thread%s)", width, height, ae->pic_width,
