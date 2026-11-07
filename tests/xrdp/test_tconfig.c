@@ -148,6 +148,7 @@ START_TEST(test_tconfig_gfx_av1_params)
     ck_assert_int_eq(p->cq_level, 28);
     ck_assert_int_eq(p->target_bitrate, 0);
     ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
+    ck_assert_int_eq(p->rate_control, XTC_RC_AUTO);
 
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
 
@@ -157,12 +158,18 @@ START_TEST(test_tconfig_gfx_av1_params)
     ck_assert_int_eq(p->cq_level, 30);
     ck_assert_int_eq(p->target_bitrate, 0);
     ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
+    ck_assert_int_eq(p->rate_control, XTC_RC_AUTO);
 
-    /* WAN: a bitrate, on top of the default section */
+    /* WAN: a bitrate as the ceiling of cq, on top of the default section */
     p = &gfxconfig.av1_param[CONNECTION_TYPE_WAN];
     ck_assert_int_eq(p->target_bitrate, 15000);
     ck_assert_int_eq(p->cpu_used, 11);
     ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
+    ck_assert_int_eq(p->rate_control, XTC_RC_CQ);
+
+    /* satellite: the name in any case */
+    p = &gfxconfig.av1_param[CONNECTION_TYPE_SATELLITE];
+    ck_assert_int_eq(p->rate_control, XTC_RC_CBR);
 
     /* broadband_low: chroma as a number */
     p = &gfxconfig.av1_param[CONNECTION_TYPE_BROADBAND_LOW];
@@ -173,6 +180,7 @@ START_TEST(test_tconfig_gfx_av1_params)
     ck_assert_int_eq(p->cpu_used, 10);
     ck_assert_int_eq(p->cq_level, 28);
     ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
+    ck_assert_int_eq(p->rate_control, XTC_RC_AUTO);
 
     ck_assert_str_eq(tconfig_av1_chroma_to_str(XTC_AV1_CHROMA_AUTO), "auto");
     ck_assert_str_eq(tconfig_av1_chroma_to_str(XTC_AV1_CHROMA_420), "420");
@@ -210,6 +218,80 @@ START_TEST(test_tconfig_gfx_av1_params_env)
 }
 END_TEST
 
+START_TEST(test_tconfig_gfx_av1_rate_control_env)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+
+    /* XRDP_GFX_AV1_RATE_CONTROL overrides the file for every connection
+     * type, and leaves AV2 alone */
+    g_setenv("XRDP_GFX_AV1_RATE_CONTROL", "cq", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        ck_assert_int_eq(gfxconfig.av1_param[ct].rate_control, XTC_RC_CQ);
+        ck_assert_int_eq(gfxconfig.av2_param[ct].rate_control, XTC_RC_AUTO);
+    }
+
+    /* "auto" takes the file's choice back to the old behaviour */
+    g_setenv("XRDP_GFX_AV1_RATE_CONTROL", "Auto", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_WAN].rate_control,
+                     XTC_RC_AUTO);
+
+    /* Invalid values are ignored: the file decides */
+    g_setenv("XRDP_GFX_AV1_RATE_CONTROL", "crf", 1);
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av1_params.toml", &gfxconfig);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_WAN].rate_control,
+                     XTC_RC_CQ);
+    ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].rate_control,
+                     XTC_RC_AUTO);
+
+    unsetenv("XRDP_GFX_AV1_RATE_CONTROL");
+}
+END_TEST
+
+START_TEST(test_tconfig_gfx_rate_control_resolve)
+{
+    int needs_target = -1;
+
+    /* auto: as before rate_control existed */
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_AUTO, 0,
+                     &needs_target), XTC_RC_Q);
+    ck_assert_int_eq(needs_target, 0);
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_AUTO, 12000,
+                     &needs_target), XTC_RC_CBR);
+    ck_assert_int_eq(needs_target, 0);
+
+    /* q ignores a target; the others keep theirs */
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_Q, 12000,
+                     &needs_target), XTC_RC_Q);
+    ck_assert_int_eq(needs_target, 0);
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_CQ, 12000,
+                     &needs_target), XTC_RC_CQ);
+    ck_assert_int_eq(needs_target, 0);
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_CBR, 12000,
+                     &needs_target), XTC_RC_CBR);
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_VBR, 12000,
+                     NULL), XTC_RC_VBR);
+
+    /* cq, cbr and vbr without a target: constant quality, and said so */
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_CQ, 0,
+                     &needs_target), XTC_RC_Q);
+    ck_assert_int_eq(needs_target, 1);
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_CBR, 0,
+                     &needs_target), XTC_RC_Q);
+    ck_assert_int_eq(needs_target, 1);
+    ck_assert_int_eq(tconfig_rate_control_resolve(XTC_RC_VBR, 0, NULL),
+                     XTC_RC_Q);
+
+    ck_assert_str_eq(tconfig_rate_control_to_str(XTC_RC_AUTO), "auto");
+    ck_assert_str_eq(tconfig_rate_control_to_str(XTC_RC_Q), "q");
+    ck_assert_str_eq(tconfig_rate_control_to_str(XTC_RC_CQ), "cq");
+    ck_assert_str_eq(tconfig_rate_control_to_str(XTC_RC_CBR), "cbr");
+    ck_assert_str_eq(tconfig_rate_control_to_str(XTC_RC_VBR), "vbr");
+}
+END_TEST
+
 START_TEST(test_tconfig_gfx_av2_params)
 {
     struct xrdp_tconfig_gfx gfxconfig;
@@ -228,6 +310,7 @@ START_TEST(test_tconfig_gfx_av2_params)
         ck_assert_int_eq(p->tile_columns, 1);
         ck_assert_int_eq(p->dpb_size, 4);
         ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
+        ck_assert_int_eq(p->rate_control, XTC_RC_AUTO);
     }
     ck_assert_str_eq(tconfig_codec_order_to_str(&gfxconfig.codec, buff,
                      sizeof(buff)), "AV2, AV1, H264, RFX");
@@ -243,6 +326,7 @@ START_TEST(test_tconfig_gfx_av2_params)
     ck_assert_int_eq(p->tile_columns, 2);
     ck_assert_int_eq(p->dpb_size, 2);
     ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
+    ck_assert_int_eq(p->rate_control, XTC_RC_Q);
 
     /* WAN: a bitrate and one tile column, on top of the default section */
     p = &gfxconfig.av2_param[CONNECTION_TYPE_WAN];
@@ -251,6 +335,7 @@ START_TEST(test_tconfig_gfx_av2_params)
     ck_assert_int_eq(p->dpb_size, 2);
     ck_assert_int_eq(p->qp, 120);
     ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_420);
+    ck_assert_int_eq(p->rate_control, XTC_RC_VBR);
 
     /* broadband_low: chroma as a number */
     p = &gfxconfig.av2_param[CONNECTION_TYPE_BROADBAND_LOW];
@@ -265,6 +350,7 @@ START_TEST(test_tconfig_gfx_av2_params)
     ck_assert_int_eq(p->tile_columns, 1);
     ck_assert_int_eq(p->dpb_size, 4);
     ck_assert_int_eq(p->chroma, XTC_AV1_CHROMA_AUTO);
+    ck_assert_int_eq(p->rate_control, XTC_RC_Q);
 
     /* AV1 is not in the order: its section is not read */
     ck_assert_int_eq(gfxconfig.av1_param[CONNECTION_TYPE_LAN].threads, 2);
@@ -290,6 +376,7 @@ START_TEST(test_tconfig_gfx_av2_params_env)
     g_setenv("XRDP_GFX_AV2_TILE_COLUMNS", "3", 1);
     g_setenv("XRDP_GFX_AV2_DPB_SIZE", "6", 1);
     g_setenv("XRDP_GFX_AV2_CHROMA", "444", 1);
+    g_setenv("XRDP_GFX_AV2_RATE_CONTROL", "CQ", 1);
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av2_params.toml", &gfxconfig);
     for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
     {
@@ -300,8 +387,10 @@ START_TEST(test_tconfig_gfx_av2_params_env)
         ck_assert_int_eq(gfxconfig.av2_param[ct].tile_columns, 3);
         ck_assert_int_eq(gfxconfig.av2_param[ct].dpb_size, 6);
         ck_assert_int_eq(gfxconfig.av2_param[ct].chroma, XTC_AV1_CHROMA_444);
+        ck_assert_int_eq(gfxconfig.av2_param[ct].rate_control, XTC_RC_CQ);
         ck_assert_int_eq(gfxconfig.av1_param[ct].threads, 2);
         ck_assert_int_eq(gfxconfig.av1_param[ct].chroma, XTC_AV1_CHROMA_AUTO);
+        ck_assert_int_eq(gfxconfig.av1_param[ct].rate_control, XTC_RC_AUTO);
     }
 
     /* Invalid values are ignored: the file decides */
@@ -310,6 +399,7 @@ START_TEST(test_tconfig_gfx_av2_params_env)
     g_setenv("XRDP_GFX_AV2_TILE_COLUMNS", "7", 1);
     g_setenv("XRDP_GFX_AV2_DPB_SIZE", "0", 1);
     g_setenv("XRDP_GFX_AV2_CHROMA", "422", 1);
+    g_setenv("XRDP_GFX_AV2_RATE_CONTROL", "", 1);
     tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_av2_params.toml", &gfxconfig);
     ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].cpu_used, 10);
     ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].qp, 120);
@@ -317,6 +407,10 @@ START_TEST(test_tconfig_gfx_av2_params_env)
     ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].dpb_size, 2);
     ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].chroma,
                      XTC_AV1_CHROMA_420);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_LAN].rate_control,
+                     XTC_RC_Q);
+    ck_assert_int_eq(gfxconfig.av2_param[CONNECTION_TYPE_WAN].rate_control,
+                     XTC_RC_VBR);
 
     unsetenv("XRDP_GFX_AV2_THREADS");
     unsetenv("XRDP_GFX_AV2_CPU_USED");
@@ -325,6 +419,7 @@ START_TEST(test_tconfig_gfx_av2_params_env)
     unsetenv("XRDP_GFX_AV2_TILE_COLUMNS");
     unsetenv("XRDP_GFX_AV2_DPB_SIZE");
     unsetenv("XRDP_GFX_AV2_CHROMA");
+    unsetenv("XRDP_GFX_AV2_RATE_CONTROL");
 }
 END_TEST
 
@@ -427,6 +522,8 @@ make_suite_tconfig_load_gfx(void)
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_threads_env);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_params);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_params_env);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av1_rate_control_env);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_rate_control_resolve);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av2_params);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_av2_params_env);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_missing_file);

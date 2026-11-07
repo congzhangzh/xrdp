@@ -62,12 +62,26 @@ enum xrdp_tconfig_av1_chroma
     XTC_AV1_CHROMA_444
 };
 
+/* Rate control of AV1 and AV2, [AV1] (or [AV2]) rate_control in gfx.toml.
+ * Unset (auto): CBR with a target_bitrate, constant quality without one,
+ * as before the key existed */
+enum xrdp_tconfig_rate_control
+{
+    XTC_RC_AUTO,
+    XTC_RC_Q,   /* constant quality: cq_level (AV1) or qp (AV2) */
+    XTC_RC_CQ,  /* constrained quality: that quality, target_bitrate as a
+                 * ceiling */
+    XTC_RC_CBR, /* constant bitrate, target_bitrate */
+    XTC_RC_VBR  /* variable bitrate around target_bitrate */
+};
+
 struct xrdp_tconfig_gfx_av1_param
 {
     int threads;
     int cpu_used;       /* real-time speed, 5 (slower, smaller) to 12 */
     int cq_level;       /* constant quality, 0 (best) to 63 */
     int target_bitrate; /* kbps; 0 for constant quality (cq_level) */
+    enum xrdp_tconfig_rate_control rate_control;
     enum xrdp_tconfig_av1_chroma chroma;
 };
 
@@ -79,6 +93,7 @@ struct xrdp_tconfig_gfx_av2_param
     int cpu_used;       /* real-time speed, 0 (slower, smaller) to 10 */
     int qp;             /* constant quality, 0 (best) to 255 */
     int target_bitrate; /* kbps; 0 for constant quality (qp) */
+    enum xrdp_tconfig_rate_control rate_control;
     int tile_columns;   /* log2 of the tile columns, 0 to 6 */
     int dpb_size;       /* frames kept for reference, 1 to 16 */
     enum xrdp_tconfig_av1_chroma chroma;
@@ -153,6 +168,32 @@ tconfig_codec_order_to_str(
  */
 const char *
 tconfig_av1_chroma_to_str(enum xrdp_tconfig_av1_chroma chroma);
+
+/**
+ * Name of a rate control, as gfx.toml spells it
+ *
+ * @param rc Rate control
+ * @return "auto", "q", "cq", "cbr" or "vbr"
+ */
+const char *
+tconfig_rate_control_to_str(enum xrdp_tconfig_rate_control rc);
+
+/**
+ * The rate control an AV1 or AV2 encoder runs with
+ *
+ * auto is CBR with a target bitrate and constant quality without one. cq,
+ * cbr and vbr need a target bitrate: without one they run as constant
+ * quality, and *needs_target is set so the caller can say so
+ *
+ * @param rc Rate control from gfx.toml or the environment
+ * @param target_bitrate kbps, 0 for none
+ * @param needs_target Set to 1 if rc was given up for the lack of a
+ *        target bitrate, else to 0. May be NULL
+ * @return XTC_RC_Q, XTC_RC_CQ, XTC_RC_CBR or XTC_RC_VBR
+ */
+enum xrdp_tconfig_rate_control
+tconfig_rate_control_resolve(enum xrdp_tconfig_rate_control rc,
+                             int target_bitrate, int *needs_target);
 
 /**
  * Loads the GFX config from the specified file

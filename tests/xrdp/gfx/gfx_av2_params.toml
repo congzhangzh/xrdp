@@ -17,6 +17,7 @@ threads = 7
 cq_level = 40
 
 [AV2.default]
+rate_control = "q"
 threads = 6
 cpu_used = 10
 qp = 120
@@ -26,6 +27,7 @@ chroma = "420"
 
 [AV2.wan]
 target_bitrate = 15_000
+rate_control = "vbr"
 tile_columns = 0
 
 [AV2.broadband_low]
@@ -38,3 +40,4 @@ qp = 256             # invalid: the default value is used
 tile_columns = 7     # invalid: the default value is used
 dpb_size = 17        # invalid: the default value is used
 chroma = "422"       # invalid: the default value is used
+rate_control = 1     # invalid (not a string): the inherited value is kept

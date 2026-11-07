@@ -100,11 +100,19 @@ MaxBitrate =    1_200_000
 threads = 2
 # Speed, 5 (slower) to 12 (fastest): 8 makes about 10% smaller frames
 cpu_used = 10
-# Constant quality, 0 (best) to 63, used when target_bitrate is 0
+# Constant quality, 0 (best) to 63, used when target_bitrate is 0 or
+# rate_control is "q" or "cq"
 cq_level = 28
-# A bitrate in kbps, or 0 for constant quality. A single second can take
-# 1.4 to 2 times the target: set about 0.7 of what the link carries
+# A bitrate in kbps, or 0 for constant quality. In CBR a single second can
+# take 1.4 to 2 times the target: set about 0.7 of what the link carries
 target_bitrate = 0
+# Rate control: "q" constant quality (cq_level, target_bitrate unused);
+# "cq" constrained quality: cq_level while the screen is cheap,
+# target_bitrate as a ceiling when it is busy; "cbr" or "vbr" around
+# target_bitrate. cq, cbr and vbr need a target_bitrate, else they run as
+# "q". Unset: "cbr" with a target_bitrate, "q" without. For the best
+# picture a link allows, e.g. cq_level = 16, target_bitrate = 12_000
+#rate_control = "cq"
 # Chroma subsampling: "auto" encodes 4:4:4 (AV1 profile 1) when the client
 # offers it and the session sends full colour (Wayland, GNOME), else
 # 4:2:0 (profile 0); "420" always 4:2:0, for clients that decode in
@@ -131,10 +139,14 @@ threads = 4
 # Speed, 0 (slower) to 9 (fastest), or 10 with a libavm that has it
 cpu_used = 9
 # Constant quality (a quantizer index), 0 (best) to 255, used when
-# target_bitrate is 0
+# target_bitrate is 0 or rate_control is "q" or "cq"
 qp = 160
 # A bitrate in kbps, or 0 for constant quality
 target_bitrate = 0
+# Rate control, as for AV1: "q", "cq" (qp, target_bitrate as a ceiling),
+# "cbr" or "vbr"; unset, "cbr" with a target_bitrate, "q" without. E.g.
+# qp = 100, target_bitrate = 10_000
+#rate_control = "cq"
 # Tile columns, as a power of two: 0 (one), 1 (two), 2 (four) ... 6. More
 # columns keep more threads busy, at a few percent more bits
 tile_columns = 1

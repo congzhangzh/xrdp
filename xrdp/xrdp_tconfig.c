@@ -91,7 +91,8 @@ struct video_param_def
 };
 
 /* A video codec's section of gfx.toml: its parameters, kept in a struct
- * for each connection type, one of which is the chroma setting */
+ * for each connection type, two of which are the chroma setting and the
+ * rate control */
 struct video_codec_def
 {
     const char *section;            /* "AV1": [AV1.<connection type>] */
@@ -100,6 +101,8 @@ struct video_codec_def
     size_t param_size;              /* the struct of one connection type */
     size_t chroma_offset;           /* its enum xrdp_tconfig_av1_chroma */
     const char *chroma_env;         /* XRDP_GFX_AV1_CHROMA */
+    size_t rc_offset;               /* its enum xrdp_tconfig_rate_control */
+    const char *rc_env;             /* XRDP_GFX_AV1_RATE_CONTROL */
 };
 
 #define AV1_PARAM_OFFSET(member) \
@@ -132,7 +135,8 @@ static const struct video_codec_def av1_codec =
 {
     "AV1", av1_params, AV1_PARAM_COUNT,
     AV1_PARAM_SIZE, AV1_PARAM_OFFSET(chroma),
-    "XRDP_GFX_AV1_CHROMA"
+    "XRDP_GFX_AV1_CHROMA",
+    AV1_PARAM_OFFSET(rate_control), "XRDP_GFX_AV1_RATE_CONTROL"
 };
 
 #define AV2_PARAM_OFFSET(member) \
@@ -173,7 +177,8 @@ static const struct video_codec_def av2_codec =
 {
     "AV2", av2_params, AV2_PARAM_COUNT,
     AV2_PARAM_SIZE, AV2_PARAM_OFFSET(chroma),
-    "XRDP_GFX_AV2_CHROMA"
+    "XRDP_GFX_AV2_CHROMA",
+    AV2_PARAM_OFFSET(rate_control), "XRDP_GFX_AV2_RATE_CONTROL"
 };
 
 /* The struct of connection type ct in an array of them */
@@ -196,6 +201,76 @@ video_chroma_ptr(const struct video_codec_def *cd, void *param)
     char *p = (char *)param + cd->chroma_offset;
 
     return (enum xrdp_tconfig_av1_chroma *)p;
+}
+
+static enum xrdp_tconfig_rate_control *
+video_rc_ptr(const struct video_codec_def *cd, void *param)
+{
+    char *p = (char *)param + cd->rc_offset;
+
+    return (enum xrdp_tconfig_rate_control *)p;
+}
+
+const char *
+tconfig_rate_control_to_str(enum xrdp_tconfig_rate_control rc)
+{
+    switch (rc)
+    {
+        case XTC_RC_Q:
+            return "q";
+        case XTC_RC_CQ:
+            return "cq";
+        case XTC_RC_CBR:
+            return "cbr";
+        case XTC_RC_VBR:
+            return "vbr";
+        default:
+            return "auto";
+    }
+}
+
+/* "auto", "q", "cq", "cbr" or "vbr", in any case. Returns 0 if s is one
+ * of them */
+static int
+rate_control_from_str(const char *s, enum xrdp_tconfig_rate_control *rc)
+{
+    static const enum xrdp_tconfig_rate_control all[] =
+    {
+        XTC_RC_AUTO, XTC_RC_Q, XTC_RC_CQ, XTC_RC_CBR, XTC_RC_VBR
+    };
+
+    for (unsigned int i = 0; i < sizeof(all) / sizeof(all[0]); i++)
+    {
+        if (g_strcasecmp(s, tconfig_rate_control_to_str(all[i])) == 0)
+        {
+            *rc = all[i];
+            return 0;
+        }
+    }
+    return 1;
+}
+
+enum xrdp_tconfig_rate_control
+tconfig_rate_control_resolve(enum xrdp_tconfig_rate_control rc,
+                             int target_bitrate, int *needs_target)
+{
+    int given_up = 0;
+
+    if (rc == XTC_RC_AUTO)
+    {
+        rc = (target_bitrate > 0) ? XTC_RC_CBR : XTC_RC_Q;
+    }
+    else if (rc != XTC_RC_Q && target_bitrate <= 0)
+    {
+        /* a ceiling or a target of nothing: constant quality */
+        rc = XTC_RC_Q;
+        given_up = 1;
+    }
+    if (needs_target != NULL)
+    {
+        *needs_target = given_up;
+    }
+    return rc;
 }
 
 const char *
@@ -645,6 +720,21 @@ tconfig_load_gfx_video_ct(toml_table_t *tfile, const struct video_codec_def *cd,
         free(datum.u.s);
     }
 
+    /* rate_control: "q", "cq", "cbr" or "vbr"; "auto" (unset) as before */
+    datum = toml_string_in(section_ct, "rate_control");
+    if (datum.ok)
+    {
+        if (rate_control_from_str(datum.u.s, video_rc_ptr(cd, param)) != 0)
+        {
+            TCLOG(LOG_LEVEL_WARNING,
+                  "[%s.%s] rate_control must be \"q\", \"cq\", \"cbr\" or "
+                  "\"vbr\", adopting the default value \"auto\"",
+                  cd->section, rdpbcgr_connection_type_names[connection_type]);
+            *video_rc_ptr(cd, param) = XTC_RC_AUTO;
+        }
+        free(datum.u.s);
+    }
+
     return 0;
 }
 
@@ -677,6 +767,7 @@ tconfig_video_defaults(const struct video_codec_def *cd, void *params)
             *video_param_ptr(cd, param, i) = cd->params[i].def;
         }
         *video_chroma_ptr(cd, param) = XTC_AV1_CHROMA_AUTO;
+        *video_rc_ptr(cd, param) = XTC_RC_AUTO;
     }
 }
 
@@ -853,15 +944,44 @@ disable_codec(struct xrdp_tconfig_gfx_codec_order *co,
     co->codec_count = j;
 }
 
+/* XRDP_GFX_AV1_RATE_CONTROL (or XRDP_GFX_AV2_RATE_CONTROL), if set and
+ * valid, overrides gfx.toml for every connection type */
+static void
+tconfig_load_gfx_video_rc_env(const struct video_codec_def *cd, void *params)
+{
+    const char *rc_env = g_getenv(cd->rc_env);
+    enum xrdp_tconfig_rate_control rc;
+
+    if (rc_env == NULL)
+    {
+        return;
+    }
+    if (rate_control_from_str(rc_env, &rc) != 0)
+    {
+        TCLOG(LOG_LEVEL_WARNING, "%s set but invalid %s "
+              "(must be q, cq, cbr, vbr or auto), ignoring it", cd->rc_env,
+              rc_env);
+        return;
+    }
+    TCLOG(LOG_LEVEL_INFO, "%s set to %s", cd->rc_env,
+          tconfig_rate_control_to_str(rc));
+    for (int ct = 0; ct < NUM_CONNECTION_TYPES; ct++)
+    {
+        *video_rc_ptr(cd, video_param_at(cd, params, ct)) = rc;
+    }
+}
+
 /* XRDP_GFX_AV1_<KEY> (XRDP_GFX_AV1_THREADS, XRDP_GFX_AV1_CPU_USED, ...,
- * XRDP_GFX_AV1_CHROMA), and XRDP_GFX_AV2_<KEY> for AV2, if set,
- * override gfx.toml for every connection type. Invalid values are
- * ignored */
+ * XRDP_GFX_AV1_CHROMA, XRDP_GFX_AV1_RATE_CONTROL), and XRDP_GFX_AV2_<KEY>
+ * for AV2, if set, override gfx.toml for every connection type. Invalid
+ * values are ignored */
 static void
 tconfig_load_gfx_video_env(const struct video_codec_def *cd, void *params)
 {
     const char *chroma_env = g_getenv(cd->chroma_env);
     enum xrdp_tconfig_av1_chroma chroma;
+
+    tconfig_load_gfx_video_rc_env(cd, params);
 
     for (unsigned int i = 0; i < cd->param_count; i++)
     {
