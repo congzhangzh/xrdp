@@ -177,7 +177,9 @@ av2_open(struct av2_encoder *ae, int width, int height, int yuv444,
     size_t uv_bytes;
     avm_codec_err_t err;
     int cpu_used = param->cpu_used;
-    char rc[32];
+    enum xrdp_tconfig_rate_control mode;
+    int needs_target;
+    char rc[48];
     char dpb[16];
 
     /* even for 4:2:0; the client crops what is beyond the surface */
@@ -202,15 +204,35 @@ av2_open(struct av2_encoder *ae, int width, int height, int yuv444,
     cfg.g_timebase.den = AV2_TIMEBASE_DEN;
     cfg.g_threads = param->threads; /* rows and tiles in parallel */
     cfg.g_lag_in_frames = 0;    /* a frame out for each frame in */
-    if (param->target_bitrate > 0)
+    mode = tconfig_rate_control_resolve(param->rate_control,
+                                        param->target_bitrate,
+                                        &needs_target);
+    if (needs_target)
     {
-        /* libavm's CBR, with its default buffer */
-        cfg.rc_end_usage = AVM_CBR;
-        cfg.rc_target_bitrate = param->target_bitrate;
+        LOG(LOG_LEVEL_WARNING, "xrdp_encoder_av2: rate_control %s needs a "
+            "target_bitrate: q instead",
+            tconfig_rate_control_to_str(param->rate_control));
     }
-    else
+    switch (mode)
     {
-        cfg.rc_end_usage = AVM_Q; /* constant quality, qp */
+        case XTC_RC_CQ:
+            /* qp as the best quality, raised only to stay under the target
+             * (av2/encoder/ratectrl.c) */
+            cfg.rc_end_usage = AVM_CQ;
+            cfg.rc_target_bitrate = param->target_bitrate;
+            break;
+        case XTC_RC_CBR:
+            /* libavm's CBR, with its default buffer */
+            cfg.rc_end_usage = AVM_CBR;
+            cfg.rc_target_bitrate = param->target_bitrate;
+            break;
+        case XTC_RC_VBR:
+            cfg.rc_end_usage = AVM_VBR;
+            cfg.rc_target_bitrate = param->target_bitrate;
+            break;
+        default:
+            cfg.rc_end_usage = AVM_Q; /* constant quality, qp */
+            break;
     }
     cfg.kf_mode = AVM_KF_DISABLED;
     err = avm_codec_enc_init(&ae->ctx, iface, &cfg, 0);
@@ -230,7 +252,8 @@ av2_open(struct av2_encoder *ae, int width, int height, int yuv444,
             cpu_used);
         AV2_CONTROL(&ae->ctx, AVME_SET_CPUUSED, cpu_used);
     }
-    if (param->target_bitrate <= 0)
+    /* Without it, CQ would run on libavm's own qp (40) */
+    if (mode == XTC_RC_Q || mode == XTC_RC_CQ)
     {
         AV2_CONTROL(&ae->ctx, AVME_SET_QP, param->qp);
     }
@@ -269,13 +292,21 @@ av2_open(struct av2_encoder *ae, int width, int height, int yuv444,
     ae->height = height;
     ae->pts = 0;
     ae->last_ms = g_get_elapsed_ms();
-    if (param->target_bitrate > 0)
+    switch (mode)
     {
-        g_snprintf(rc, sizeof(rc), "CBR %d kbps", param->target_bitrate);
-    }
-    else
-    {
-        g_snprintf(rc, sizeof(rc), "qp %d", param->qp);
+        case XTC_RC_CQ:
+            g_snprintf(rc, sizeof(rc), "rate control cq, qp %d up to %d kbps",
+                       param->qp, param->target_bitrate);
+            break;
+        case XTC_RC_CBR:
+        case XTC_RC_VBR:
+            g_snprintf(rc, sizeof(rc), "rate control %s, %d kbps",
+                       tconfig_rate_control_to_str(mode),
+                       param->target_bitrate);
+            break;
+        default:
+            g_snprintf(rc, sizeof(rc), "rate control q, qp %d", param->qp);
+            break;
     }
     LOG(LOG_LEVEL_INFO, "xrdp_encoder_av2: encoder for %dx%d (picture %dx%d, "
         "%s, cpu-used %d, %s, %d thread%s, %d tile column%s, dpb-size %d)",
