@@ -80,6 +80,7 @@ struct xrdp_tconfig_gfx_av2_param
     int qp;             /* constant quality, 0 (best) to 255 */
     int target_bitrate; /* kbps; 0 for constant quality (qp) */
     int tile_columns;   /* log2 of the tile columns, 0 to 6 */
+    int dpb_size;       /* frames kept for reference, 1 to 16 */
     enum xrdp_tconfig_av1_chroma chroma;
 };
 
