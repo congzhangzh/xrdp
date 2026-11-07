@@ -178,6 +178,7 @@ av2_open(struct av2_encoder *ae, int width, int height, int yuv444,
     avm_codec_err_t err;
     int cpu_used = param->cpu_used;
     char rc[32];
+    char dpb[16];
 
     /* even for 4:2:0; the client crops what is beyond the surface */
     ae->pic_width = (width + 1) & ~1;
@@ -236,6 +237,14 @@ av2_open(struct av2_encoder *ae, int width, int height, int yuv444,
     AV2_CONTROL(&ae->ctx, AV2E_SET_TUNE_CONTENT, AVM_CONTENT_SCREEN);
     AV2_CONTROL(&ae->ctx, AV2E_SET_ROW_MT, 1);
     AV2_CONTROL(&ae->ctx, AV2E_SET_TILE_COLUMNS, param->tile_columns);
+    /* libavm has no control for the number of reference slots, only the
+     * option avmenc's --dpb-size sets; it must come before the first frame */
+    g_snprintf(dpb, sizeof(dpb), "%d", param->dpb_size);
+    if (avm_codec_set_option(&ae->ctx, "dpb-size", dpb) != AVM_CODEC_OK)
+    {
+        LOG(LOG_LEVEL_WARNING, "xrdp_encoder_av2: dpb-size %s failed: %s",
+            dpb, avm_codec_error(&ae->ctx));
+    }
     AV2_CONTROL(&ae->ctx, AV2E_SET_COLOR_RANGE, AVM_CR_FULL_RANGE);
     AV2_CONTROL(&ae->ctx, AV2E_SET_COLOR_PRIMARIES, AVM_CICP_CP_BT_709);
     AV2_CONTROL(&ae->ctx, AV2E_SET_TRANSFER_CHARACTERISTICS,
@@ -269,10 +278,11 @@ av2_open(struct av2_encoder *ae, int width, int height, int yuv444,
         g_snprintf(rc, sizeof(rc), "qp %d", param->qp);
     }
     LOG(LOG_LEVEL_INFO, "xrdp_encoder_av2: encoder for %dx%d (picture %dx%d, "
-        "%s, cpu-used %d, %s, %d thread%s, %d tile column%s)", width, height,
-        ae->pic_width, ae->pic_height, yuv444 ? "4:4:4" : "4:2:0", cpu_used,
-        rc, param->threads, param->threads == 1 ? "" : "s",
-        1 << param->tile_columns, param->tile_columns == 0 ? "" : "s");
+        "%s, cpu-used %d, %s, %d thread%s, %d tile column%s, dpb-size %d)",
+        width, height, ae->pic_width, ae->pic_height,
+        yuv444 ? "4:4:4" : "4:2:0", cpu_used, rc, param->threads,
+        param->threads == 1 ? "" : "s", 1 << param->tile_columns,
+        param->tile_columns == 0 ? "" : "s", param->dpb_size);
     return 0;
 }
 

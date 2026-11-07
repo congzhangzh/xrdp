@@ -138,6 +138,10 @@ target_bitrate = 0
 # Tile columns, as a power of two: 0 (one), 1 (two), 2 (four) ... 6. More
 # columns keep more threads busy, at a few percent more bits
 tile_columns = 1
+# Frames kept for reference, 1 to 16. Each one is a whole frame in memory
+# (38 MB at 2560x1440 4:4:4). 4 makes under 1% more bits than 8, 2 about
+# a quarter more
+dpb_size = 4
 # Chroma subsampling, as for AV1: "auto", "420" or "444". 4:4:4 is AV2
 # profile 4
 chroma = "auto"

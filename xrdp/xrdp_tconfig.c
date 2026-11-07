@@ -70,6 +70,11 @@
 #define AV2_DEFAULT_QP 160
 /* log2: 2 tile columns, for the threads to work on */
 #define AV2_DEFAULT_TILE_COLUMNS 1
+/* Reference frame slots (libavm's dpb-size, 8 by default there). Each
+ * slot is a whole frame in 16 bits with a border, 38 MB at 2560x1440
+ * 4:4:4. On a desktop recording, 4 made 0.7% more bits than 8 at the
+ * same quality, and 2 made 23% more */
+#define AV2_DEFAULT_DPB_SIZE 4
 
 /* The integer parameters of [AV1.<connection type>] and
  * [AV2.<connection type>]: the key, the environment variable that
@@ -154,6 +159,10 @@ static const struct video_param_def av2_params[] =
     {
         "tile_columns", "XRDP_GFX_AV2_TILE_COLUMNS",
         AV2_PARAM_OFFSET(tile_columns), 0, 6, AV2_DEFAULT_TILE_COLUMNS
+    },
+    {
+        "dpb_size", "XRDP_GFX_AV2_DPB_SIZE", AV2_PARAM_OFFSET(dpb_size),
+        1, 16, AV2_DEFAULT_DPB_SIZE
     }
 };
 

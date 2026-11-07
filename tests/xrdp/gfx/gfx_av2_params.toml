@@ -21,6 +21,7 @@ threads = 6
 cpu_used = 10
 qp = 120
 tile_columns = 2
+dpb_size = 2
 chroma = "420"
 
 [AV2.wan]
@@ -35,4 +36,5 @@ threads = 0          # invalid: the default value is used
 cpu_used = 11        # invalid: the default value is used
 qp = 256             # invalid: the default value is used
 tile_columns = 7     # invalid: the default value is used
+dpb_size = 17        # invalid: the default value is used
 chroma = "422"       # invalid: the default value is used

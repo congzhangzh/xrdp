@@ -244,6 +244,16 @@ encoded independently, so more of them keep more threads busy, at a few
 percent more bits; video-like content gains most from \fB2\fR.
 
 .TP
+\fBdpb_size\fR = \fI<integer>\fR
+The number of frames the encoder keeps for reference, from \fB1\fR to
+\fB16\fR. Defaults to \fB4\fR (libavm's own default is 8). Each frame
+is kept whole, in 16 bits and with a border, about 38 MB at 2560x1440
+in 4:4:4, so this is the setting that decides most of the encoder's
+memory after the frame size. On a desktop recording (1080p, 4:4:4) 4
+made 0.7% more bits than 8 at the same quality, and 2 made 23% more, so
+going below 4 is rarely worth it.
+
+.TP
 \fBchroma\fR = \fI<string>\fR
 The chroma subsampling, \fBauto\fR (the default), \fB420\fR or
 \fB444\fR, as for \fB[AV1]\fR. 4:4:4 is AV2 profile 4 (main 4:4:4),
