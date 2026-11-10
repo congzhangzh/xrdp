@@ -881,15 +881,11 @@ gfx_wiretosurface1(struct xrdp_encoder *self,
     in_uint16_le(in_s, surface_id);
     in_uint16_le(in_s, codec_id);
     if (codec_id == XR_RDPGFX_CODECID_AVC420 &&
-            (self->mm->egfx_flags & XRDP_EGFX_AV2) != 0)
+            (self->mm->egfx_flags & (XRDP_EGFX_AV1 | XRDP_EGFX_AV2)) != 0)
     {
-        /* Encoded as AV2 instead, with the same framing */
-        codec_id = XR_RDPGFX_CODECID_AV2;
-    }
-    else if (codec_id == XR_RDPGFX_CODECID_AVC420 &&
-             (self->mm->egfx_flags & XRDP_EGFX_AV1) != 0)
-    {
-        /* Encoded as AV1 instead, with the same framing */
+        /* Encoded as AV1 or AV2 instead, with the same framing. Both go
+         * with the codec ID of AV1: the confirmed caps version, FRDP_1 or
+         * FRDP_2, tells the client which one it is */
         codec_id = XR_RDPGFX_CODECID_AV1;
     }
     in_uint8(in_s, pixel_format);

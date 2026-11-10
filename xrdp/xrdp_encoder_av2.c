@@ -16,7 +16,8 @@
  * AV2 encoder (libavm), for FreeRDP's GFX AV2 extension
  *
  * FreeRDP clients that offer the capability set RDPGFX_CAPVERSION_FRDP_2
- * decode RDPGFX_CODECID_AV2: an AV2 bitstream after an
+ * decode RDPGFX_CODECID_AV1 as AV2 once that set is confirmed (the same
+ * ID is AV1 under RDPGFX_CAPVERSION_FRDP_1): an AV2 bitstream after an
  * RFX_AVC420_METABLOCK, framed exactly as AVC420 and as AV1 (FreeRDP's
  * channels/rdpgfx/client/rdpgfx_codec.c). This encoder is the AV1 one
  * (xrdp_encoder_av1.c) with libavm, the AV2 reference, in place of

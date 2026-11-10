@@ -45,9 +45,10 @@
  * codec (XR_RDPGFX_CODECID_AV1). See FreeRDP's
  * include/freerdp/channels/rdpgfx.h */
 #define XR_RDPGFX_CAPVERSION_FRDP_1 0x00010000
-/* FreeRDP's extension, as FRDP_1 but for the AV2 codec
- * (XR_RDPGFX_CODECID_AV2): a capability set of its own, so a client
- * offers AV1 and AV2 separately */
+/* FreeRDP's extension, as FRDP_1 but for AV2: a capability set of its
+ * own, so a client offers AV1 and AV2 separately. AV2 comes with the
+ * codec ID of AV1 (XR_RDPGFX_CODECID_AV1); the confirmed version tells
+ * the client which of the two it is */
 #define XR_RDPGFX_CAPVERSION_FRDP_2 0x00020000
 
 #define XR_PIXEL_FORMAT_XRGB_8888   0x20
@@ -122,12 +123,11 @@
 /* The bitmap data encapsulated in the bitmapData field is compressed using
    the MPEG-4 AVC/H.264 Codec in YUV444v2 mode (section 2.2.4.6). */
 #define XR_RDPGFX_CODECID_AVC444V2          0x000F
-/* FreeRDP's extension, with XR_RDPGFX_CAPVERSION_FRDP_1 only: an AV1
- * bitstream after an RFX_AVC420_METABLOCK, framed as for AVC420 */
+/* FreeRDP's extension: after an RFX_AVC420_METABLOCK, framed as for
+ * AVC420, an AV1 bitstream with XR_RDPGFX_CAPVERSION_FRDP_1, an AV2 one
+ * with XR_RDPGFX_CAPVERSION_FRDP_2 (FreeRDP aa9940f24: the codec ID
+ * namespace is Microsoft's, so AV2 takes no ID of its own) */
 #define XR_RDPGFX_CODECID_AV1               0x0001
-/* FreeRDP's extension, with XR_RDPGFX_CAPVERSION_FRDP_2 only: an AV2
- * bitstream after an RFX_AVC420_METABLOCK, framed as for AVC420 */
-#define XR_RDPGFX_CODECID_AV2               0x0002
 
 struct xrdp_egfx_rect
 {
